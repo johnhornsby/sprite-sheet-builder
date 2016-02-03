@@ -1,9 +1,30 @@
 import {Timeline, Tween, MotionTween} from "timeline";
+import Rectangle from './lib/geom/rectangle';
+import PIXI from "pixi.js/bin/pixi";
+
 
 class Main {
 
 
 	_timeline = null;
+
+	_rowIndex = 0;
+
+	_colIndex = 0;
+
+	_frameWidth = 0;
+
+	_frameHeight = 0;
+
+	_frameCanvas = [];
+
+	_renderer = null;
+
+	_canvasContainer = null;
+
+	_rootContainer = null;
+
+
 
 	constructor() {
 
@@ -12,8 +33,30 @@ class Main {
 
 
 	_init() {
+		this._render = ::this._render;
 		this._createTimeline();
 		this._outputFrames();
+
+		this._build();
+		this._render();
+	}
+
+
+	_build() {
+		this._canvasContainer = document.createElement('div');
+		this._canvasContainer.width = 128;
+		this._canvasContainer.height = 128;
+		document.body.appendChild(this._canvasContainer);
+		this._renderer = PIXI.autoDetectRenderer(128, 128, {antialias: false});
+		this._canvasContainer.appendChild(this._renderer.view);
+		this._rootContainer = new PIXI.Container();
+	}
+
+
+	_render() {
+		this._renderer.render(this._rootContainer);
+
+		window.requestAnimationFrame(this._render);
 	}
 
 
@@ -46,29 +89,75 @@ class Main {
 		const canvas = document.createElement("canvas");
 		canvas.width = 2048;
 		canvas.height = 2048;
-		document.body.appendChild(canvas);
+		// document.body.appendChild(canvas);
 
-		const width = 2048 / 16;
-		const height = 2048 / 16;
+		// @TODO we have to assertain the width and height of the graphic really across all frames.
 
-		let frame = {
-			x: 0,
-			y: 0,
-			width: width,
-			height: height
+		this._frameWidth = 2048 / 16;
+		this._frameHeight = 2048 / 16;
+
+		const ctx = canvas.getContext("2d");
+		const fps = 60;
+		let time = 0;
+		let state;
+		let frameRect;
+		const data = {
+			"frames": [],
+			"meta": {
+				"format": "RGBA8888",
+				"size": {
+					"w": this._frameWidth,
+					"h": this._frameHeight
+				},
+				"scale": "1",
+			}
+		};
+
+		for (let i = 0; i < 256; i++) {
+			// update time and frame
+			time = i * (1000 / fps);
+			frameRect = this._getNextFrameRect();
+			// reset context
+			ctx.setTransform(1, 0, 0, 1, 0, 0);
+			//position context
+			ctx.translate(frameRect.x, frameRect.y);
+			// get state
+			state = this._timeline.getState(time);
+			// request draw
+			this._draw(ctx, state);
+			// append json
+			data.frames.push({
+				"frame": {"x":frameRect.x,"y":frameRect.y,"w":frameRect.width,"h":frameRect.height},
+				"rotated": false,
+				"trimmed": false,
+				"spriteSourceSize": {"x":0,"y":0,"w":frameRect.width,"h":frameRect.height},
+				"sourceSize": {"w":frameRect.width,"h":frameRect.height}
+			});
 		}
-
-		const context = canvas.getContext("2d");
-
-		this._drawFrame(context, frame);
 	}
 
 
-	_drawFrame(context, frameRect) {
-		const radius = this._timeline.getState(500).get("ring-1").radius;
-		context.beginPath();
-		context.arc(frameRect.width / 2 ,frameRect.height / 2 ,radius ,0 ,2*Math.PI);
-		context.stroke();
+	_draw(ctx, state) {
+		const radius = state.get("ring-1").radius;
+
+		ctx.beginPath();
+		ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
+		ctx.stroke();
+	}
+
+
+	_getNextFrameRect() {
+		this._rowIndex += 1;
+
+		if (this._rowIndex * this._frameWidth > 2048) {
+			this._rowIndex = 0;
+			this._colIndex += 1;
+		}
+
+		const x = this._rowIndex * this._frameWidth;
+		const y = this._colIndex * this._frameHeight;
+
+		return new Rectangle(x, y, this._frameWidth, this._frameHeight);
 	}
 }
 
