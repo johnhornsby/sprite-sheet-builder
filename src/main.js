@@ -2,6 +2,7 @@ import {Timeline, Tween, MotionTween} from "timeline";
 import Rectangle from './lib/geom/rectangle';
 import PIXI from "pixi.js/bin/pixi";
 
+let step = 0;
 
 class Main {
 

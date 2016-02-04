@@ -7420,6 +7420,8 @@
 
 	var _pixiJsBinPixi2 = _interopRequireDefault(_pixiJsBinPixi);
 
+	var step = 0;
+
 	var Main = (function () {
 		function Main() {
 			_classCallCheck(this, Main);
