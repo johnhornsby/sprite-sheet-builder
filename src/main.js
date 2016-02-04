@@ -40,6 +40,22 @@ class Main {
 
 		this._build();
 		this._render();
+
+		var textureArray = [];
+
+		for (var i=0; i < 240; i++)
+		{
+		     let texture = PIXI.Texture.fromFrame(`${i}`);
+		     textureArray.push(texture);
+		};
+
+		var mc = new PIXI.extras.MovieClip(textureArray);
+
+		this._rootContainer.addChild(mc);
+		mc.loop = false;
+		mc.play();
+
+
 	}
 
 
@@ -103,7 +119,7 @@ class Main {
 		let state;
 		let frameRect;
 		const data = {
-			"frames": [],
+			"frames": {},
 			"meta": {
 				"format": "RGBA8888",
 				"size": {
@@ -114,7 +130,7 @@ class Main {
 			}
 		};
 
-		for (let i = 0; i < 256; i++) {
+		for (let i = 0; i < 240; i++) {
 			// update time and frame
 			time = i * (1000 / fps);
 			frameRect = this._getNextFrameRect();
@@ -127,14 +143,21 @@ class Main {
 			// request draw
 			this._draw(ctx, state);
 			// append json
-			data.frames.push({
+			data.frames[`${i}`] = {
 				"frame": {"x":frameRect.x,"y":frameRect.y,"w":frameRect.width,"h":frameRect.height},
 				"rotated": false,
 				"trimmed": false,
 				"spriteSourceSize": {"x":0,"y":0,"w":frameRect.width,"h":frameRect.height},
-				"sourceSize": {"w":frameRect.width,"h":frameRect.height}
-			});
+				"sourceSize": {"w":frameRect.width,"h":frameRect.height},
+				"pivot": {"x":0.5,"y":0.5}	
+			};
 		}
+
+		const baseTexture = PIXI.BaseTexture.fromCanvas(canvas);
+		const texture = new PIXI.Texture(baseTexture);
+		PIXI.Texture.addTextureToCache(texture, "animation");
+
+		this._parseJSON(data.frames, baseTexture);
 	}
 
 
@@ -142,23 +165,75 @@ class Main {
 		const radius = state.get("ring-1").radius;
 
 		ctx.beginPath();
+		ctx.strokeStyle = "white";
 		ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
 		ctx.stroke();
 	}
 
 
 	_getNextFrameRect() {
-		this._rowIndex += 1;
+		this._colIndex += 1;
 
-		if (this._rowIndex * this._frameWidth > 2048) {
-			this._rowIndex = 0;
-			this._colIndex += 1;
+		if (this._colIndex * this._frameWidth >= 2048) {
+			this._colIndex = 0;
+			this._rowIndex += 1;
 		}
 
-		const x = this._rowIndex * this._frameWidth;
-		const y = this._colIndex * this._frameHeight;
+		const x = this._colIndex * this._frameWidth;
+		const y = this._rowIndex * this._frameHeight;
 
 		return new Rectangle(x, y, this._frameWidth, this._frameHeight);
+	}
+
+
+	_parseJSON(json, baseTexture) {
+		var frames = json;
+		let resolution = 1;
+
+        for (var i in frames)
+        {
+            var rect = frames[i].frame;
+
+            if (rect)
+            {
+                var size = null;
+                var trim = null;
+
+                if (frames[i].rotated) {
+                    size = new PIXI.Rectangle(rect.x, rect.y, rect.h, rect.w);
+                }
+                else {
+                    size = new PIXI.Rectangle(rect.x, rect.y, rect.w, rect.h);
+                }
+
+                //  Check to see if the sprite is trimmed
+                if (frames[i].trimmed)
+                {
+                    trim = new PIXI.Rectangle(
+                        frames[i].spriteSourceSize.x / resolution,
+                        frames[i].spriteSourceSize.y / resolution,
+                        frames[i].sourceSize.w / resolution,
+                        frames[i].sourceSize.h / resolution
+                     );
+                }
+
+                // flip the width and height!
+                if (frames[i].rotated)
+                {
+                    var temp = size.width;
+                    size.width = size.height;
+                    size.height = temp;
+                }
+
+                size.x /= resolution;
+                size.y /= resolution;
+                size.width /= resolution;
+                size.height /= resolution;
+
+                // lets also add the frame to pixi's global cache for fromFrame and fromImage functions
+                PIXI.utils.TextureCache[i] = new PIXI.Texture(baseTexture, size, size.clone(), trim, frames[i].rotated);
+            }
+        }
 	}
 }
 
