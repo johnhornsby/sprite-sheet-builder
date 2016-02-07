@@ -7420,6 +7420,10 @@
 
 	var _pixiJsBinPixi2 = _interopRequireDefault(_pixiJsBinPixi);
 
+	var _spriteSheetBuilder = __webpack_require__(79);
+
+	var _spriteSheetBuilder2 = _interopRequireDefault(_spriteSheetBuilder);
+
 	var step = 0;
 
 	var Main = (function () {
@@ -7427,11 +7431,8 @@
 			_classCallCheck(this, Main);
 
 			this._timeline = null;
-			this._rowIndex = 0;
-			this._colIndex = 0;
 			this._frameWidth = 0;
 			this._frameHeight = 0;
-			this._frameCanvas = [];
 			this._renderer = null;
 			this._canvasContainer = null;
 			this._rootContainer = null;
@@ -7442,25 +7443,60 @@
 		_createClass(Main, [{
 			key: "_init",
 			value: function _init() {
+				var _this = this;
+
 				this._render = this._render.bind(this);
 				this._createTimeline();
-				this._outputFrames();
+
+				this._frameWidth = 2048 / 16;
+				this._frameHeight = 2048 / 16;
+
+				var spriteSheetBuilder = _spriteSheetBuilder2["default"].instance;
+				var options = {
+					timeline: this._timeline,
+					frameWidth: this._frameWidth,
+					frameHeight: this._frameHeight,
+					identifier: "ring-",
+					fps: 60,
+					draw: function draw(ctx, timelineState) {
+						_this._draw(ctx, timelineState);
+					}
+				};
+				spriteSheetBuilder.build(options);
+
+				var jsonData = spriteSheetBuilder.getSpriteSheetJSONData();
+				var imageData = spriteSheetBuilder.getSpriteSheetImageData();
+				var timeline = spriteSheetBuilder.getSpriteSheetTimeline();
+				var numberOfFrames = spriteSheetBuilder.frameLength;
+
+				var baseTextureSource = document.createElement('canvas');
+				baseTextureSource.width = jsonData[0].meta.size.w;
+				baseTextureSource.height = jsonData[0].meta.size.h;
+				baseTextureSource.getContext("2d").putImageData(imageData[0], 0, 0);
+
+				var baseTexture = _pixiJsBinPixi2["default"].BaseTexture.fromCanvas(baseTextureSource);
+				var texture = new _pixiJsBinPixi2["default"].Texture(baseTexture);
+				_pixiJsBinPixi2["default"].Texture.addTextureToCache(texture, "animation");
+
+				this._parseJSON(jsonData[0].frames, baseTexture);
 
 				this._build();
 				this._render();
 
 				var textureArray = [];
 
-				for (var i = 0; i < 240; i++) {
-					var texture = _pixiJsBinPixi2["default"].Texture.fromFrame("" + i);
-					textureArray.push(texture);
+				for (var i = 0; i < numberOfFrames; i++) {
+					var _texture = _pixiJsBinPixi2["default"].Texture.fromFrame("ring-" + i);
+					textureArray.push(_texture);
 				};
 
 				var mc = new _pixiJsBinPixi2["default"].extras.MovieClip(textureArray);
 
 				this._rootContainer.addChild(mc);
 				mc.loop = false;
-				mc.play();
+				setTimeout(function () {
+					mc.play();
+				}, 1000);
 			}
 		}, {
 			key: "_build",
@@ -7483,7 +7519,7 @@
 		}, {
 			key: "_createTimeline",
 			value: function _createTimeline() {
-				this._timeline = new _timeline.Timeline();
+				this._timeline = new _timeline.InteractiveTimeline();
 
 				var propertyKeyframes = {
 					radius: [{
@@ -7504,65 +7540,6 @@
 				this._timeline.addTween(t, 0);
 			}
 		}, {
-			key: "_outputFrames",
-			value: function _outputFrames() {
-				var canvas = document.createElement("canvas");
-				canvas.width = 2048;
-				canvas.height = 2048;
-				// document.body.appendChild(canvas);
-
-				// @TODO we have to assertain the width and height of the graphic really across all frames.
-
-				this._frameWidth = 2048 / 16;
-				this._frameHeight = 2048 / 16;
-
-				var ctx = canvas.getContext("2d");
-				var fps = 60;
-				var time = 0;
-				var state = undefined;
-				var frameRect = undefined;
-				var data = {
-					"frames": {},
-					"meta": {
-						"format": "RGBA8888",
-						"size": {
-							"w": this._frameWidth,
-							"h": this._frameHeight
-						},
-						"scale": "1"
-					}
-				};
-
-				for (var i = 0; i < 240; i++) {
-					// update time and frame
-					time = i * (1000 / fps);
-					frameRect = this._getNextFrameRect();
-					// reset context
-					ctx.setTransform(1, 0, 0, 1, 0, 0);
-					//position context
-					ctx.translate(frameRect.x, frameRect.y);
-					// get state
-					state = this._timeline.getState(time);
-					// request draw
-					this._draw(ctx, state);
-					// append json
-					data.frames["" + i] = {
-						"frame": { "x": frameRect.x, "y": frameRect.y, "w": frameRect.width, "h": frameRect.height },
-						"rotated": false,
-						"trimmed": false,
-						"spriteSourceSize": { "x": 0, "y": 0, "w": frameRect.width, "h": frameRect.height },
-						"sourceSize": { "w": frameRect.width, "h": frameRect.height },
-						"pivot": { "x": 0.5, "y": 0.5 }
-					};
-				}
-
-				var baseTexture = _pixiJsBinPixi2["default"].BaseTexture.fromCanvas(canvas);
-				var texture = new _pixiJsBinPixi2["default"].Texture(baseTexture);
-				_pixiJsBinPixi2["default"].Texture.addTextureToCache(texture, "animation");
-
-				this._parseJSON(data.frames, baseTexture);
-			}
-		}, {
 			key: "_draw",
 			value: function _draw(ctx, state) {
 				var radius = state.get("ring-1").radius;
@@ -7571,21 +7548,6 @@
 				ctx.strokeStyle = "white";
 				ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
 				ctx.stroke();
-			}
-		}, {
-			key: "_getNextFrameRect",
-			value: function _getNextFrameRect() {
-				this._colIndex += 1;
-
-				if (this._colIndex * this._frameWidth >= 2048) {
-					this._colIndex = 0;
-					this._rowIndex += 1;
-				}
-
-				var x = this._colIndex * this._frameWidth;
-				var y = this._rowIndex * this._frameHeight;
-
-				return new _libGeomRectangle2["default"](x, y, this._frameWidth, this._frameHeight);
 			}
 		}, {
 			key: "_parseJSON",
@@ -7707,15 +7669,20 @@
 
 		var _timeline2 = _interopRequireDefault(_timeline);
 
-		var _tween = __webpack_require__(2);
+		var _interactiveTimeline = __webpack_require__(2);
+
+		var _interactiveTimeline2 = _interopRequireDefault(_interactiveTimeline);
+
+		var _tween = __webpack_require__(3);
 
 		var _tween2 = _interopRequireDefault(_tween);
 
-		var _motionTween = __webpack_require__(3);
+		var _motionTween = __webpack_require__(4);
 
 		var _motionTween2 = _interopRequireDefault(_motionTween);
 
 		exports.Timeline = _timeline2['default'];
+		exports.InteractiveTimeline = _interactiveTimeline2['default'];
 		exports.Tween = _tween2['default'];
 		exports.MotionTween = _motionTween2['default'];
 
@@ -7726,98 +7693,149 @@
 		"use strict";
 
 		Object.defineProperty(exports, "__esModule", {
-		  value: true
+			value: true
 		});
+
+		var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
 
 		var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
 
 		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 
 		var TIMELINE_DEFAULT_OPTIONS = {
-		  loop: false
+			loop: false,
+			fps: 60
 		};
 
 		var Timeline = (function () {
-		  function Timeline(options) {
-		    _classCallCheck(this, Timeline);
+			function Timeline(options) {
+				_classCallCheck(this, Timeline);
 
-		    //this._currentTime = 0;
-		    this._loop = null;
-		    this._options = null;
-		    this._duration = null;
-		    this._tweens = [];
+				this._currentTime = 0;
+				this._loop = null;
+				this._options = null;
+				this._duration = null;
+				this._tweens = [];
 
-		    this._init(options);
-		  }
+				this._init(options);
+			}
 
-		  _createClass(Timeline, [{
-		    key: "addTween",
-		    value: function addTween(tween, time) {
-		      this._addTween(tween, time);
-		    }
-		  }, {
-		    key: "getState",
-		    value: function getState(time) {
-		      return this._getState(time);
-		    }
-		  }, {
-		    key: "_init",
-		    value: function _init(options) {
-		      this._options = Object.assign({}, TIMELINE_DEFAULT_OPTIONS, options);
-		    }
-		  }, {
-		    key: "_addTween",
-		    value: function _addTween(tween) {
-		      var time = arguments.length <= 1 || arguments[1] === undefined ? 0 : arguments[1];
+			/*________________________________________________________
+		 	PUBLIC CLASS METHODS
+		 ________________________________________________________*/
 
-		      if (this._tweens.length === 0 || this._tweens.find(function (tweenObjectData) {
-		        return tweenObjectData.tween === tween;
-		      }) === false) {
-		        this._tweens.push({
-		          tween: tween,
-		          time: time
-		        });
-		        this._updateDuration();
-		      }
-		    }
-		  }, {
-		    key: "_updateDuration",
-		    value: function _updateDuration() {
-		      var _this = this;
+			_createClass(Timeline, [{
+				key: Symbol.iterator,
+				value: function value() {
+					return this;
+				}
+			}, {
+				key: "next",
+				value: function next() {
+					return this._next();
+				}
+			}, {
+				key: "addTween",
+				value: function addTween(tween, time) {
+					this._addTween(tween, time);
+				}
+			}, {
+				key: "getState",
+				value: function getState(time) {
+					return this._getState(time);
+				}
+			}, {
+				key: "_init",
 
-		      this._duration = 0;
-		      this._tweens.forEach(function (tweenObjectData, index) {
-		        _this._duration = Math.max(_this._duration, tweenObjectData.time + tweenObjectData.tween.duration);
-		      });
-		    }
-		  }, {
-		    key: "_getState",
-		    value: function _getState(time) {
-		      var stateMap = new Map();
-		      // iterate over map properies
-		      this._tweens.forEach(function (tweenObjectData, index) {
-		        // interate over object properties
-		        stateMap.set(tweenObjectData.tween.identifier, tweenObjectData.tween.getState(time - tweenObjectData.time));
-		      });
-		      // return map
-		      return stateMap;
-		    }
-		  }, {
-		    key: "duration",
-		    get: function get() {
-		      return this._duration;
-		    },
-		    set: function set(duration) {
-		      this._duration = this._options.duration = duration;
-		    }
-		  }, {
-		    key: "loop",
-		    set: function set(boolean) {
-		      this._loop = boolean;
-		    }
-		  }]);
+				/*________________________________________________________
+		  	PRIVATE CLASS METHODS
+		  ________________________________________________________*/
 
-		  return Timeline;
+				value: function _init(options) {
+					this._options = _extends({}, TIMELINE_DEFAULT_OPTIONS, options);
+				}
+			}, {
+				key: "_addTween",
+				value: function _addTween(tween) {
+					var time = arguments.length <= 1 || arguments[1] === undefined ? 0 : arguments[1];
+
+					if (this._tweens.length === 0 || this._tweens.find(function (tweenObjectData) {
+						return tweenObjectData.tween === tween;
+					}) === false) {
+						this._tweens.push({
+							tween: tween,
+							time: time
+						});
+						this._updateDuration();
+					}
+				}
+			}, {
+				key: "_updateDuration",
+				value: function _updateDuration() {
+					var _this = this;
+
+					this._duration = 0;
+					this._tweens.forEach(function (tweenObjectData, index) {
+						_this._duration = Math.max(_this._duration, tweenObjectData.time + tweenObjectData.tween.duration);
+					});
+				}
+			}, {
+				key: "_getState",
+				value: function _getState(time) {
+					var stateMap = new Map();
+					// iterate over map properies
+					this._tweens.forEach(function (tweenObjectData, index) {
+						// interate over object properties
+						stateMap.set(tweenObjectData.tween.identifier, tweenObjectData.tween.getState(time - tweenObjectData.time));
+					});
+					// return map
+					return stateMap;
+				}
+			}, {
+				key: "_next",
+				value: function _next() {
+					var time = this._currentTime;
+
+					this._currentTime += 1000 / this._options.fps;
+
+					var done = time >= this._duration;
+
+					if (done) {
+						this._currentTime = 0;
+						return { done: done };
+					} else {
+						return {
+							value: this._getState(time)
+						};
+					}
+				}
+			}, {
+				key: "duration",
+				set: function set(duration) {
+					this._duration = this._options.duration = duration;
+				},
+				get: function get() {
+					return this._duration;
+				}
+			}, {
+				key: "loop",
+				set: function set(boolean) {
+					this._loop = boolean;
+				},
+				get: function get() {
+					return this._loop;
+				}
+			}, {
+				key: "currentTime",
+				set: function set(time) {
+					this._currentTime = time;
+				},
+				get: function get() {
+					return this._currentTime;
+				}
+			}]);
+
+			return Timeline;
 		})();
 
 		exports["default"] = Timeline;
@@ -7825,6 +7843,155 @@
 
 	/***/ },
 	/* 2 */
+	/***/ function(module, exports, __webpack_require__) {
+
+		'use strict';
+
+		Object.defineProperty(exports, '__esModule', {
+			value: true
+		});
+
+		var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ('value' in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
+
+		var _get = function get(_x, _x2, _x3) { var _again = true; _function: while (_again) { var object = _x, property = _x2, receiver = _x3; _again = false; if (object === null) object = Function.prototype; var desc = Object.getOwnPropertyDescriptor(object, property); if (desc === undefined) { var parent = Object.getPrototypeOf(object); if (parent === null) { return undefined; } else { _x = parent; _x2 = property; _x3 = receiver; _again = true; desc = parent = undefined; continue _function; } } else if ('value' in desc) { return desc.value; } else { var getter = desc.get; if (getter === undefined) { return undefined; } return getter.call(receiver); } } };
+
+		function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { 'default': obj }; }
+
+		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError('Cannot call a class as a function'); } }
+
+		function _inherits(subClass, superClass) { if (typeof superClass !== 'function' && superClass !== null) { throw new TypeError('Super expression must either be null or a function, not ' + typeof superClass); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } }); if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass; }
+
+		var _timeline = __webpack_require__(1);
+
+		var _timeline2 = _interopRequireDefault(_timeline);
+
+		var InteractiveTimeline = (function (_Timeline) {
+			_inherits(InteractiveTimeline, _Timeline);
+
+			function InteractiveTimeline(options) {
+				_classCallCheck(this, InteractiveTimeline);
+
+				_get(Object.getPrototypeOf(InteractiveTimeline.prototype), 'constructor', this).call(this, options);
+				this._sequences = [];
+			}
+
+			/*________________________________________________________
+		 	PUBLIC CLASS METHODS
+		 ________________________________________________________*/
+
+			_createClass(InteractiveTimeline, [{
+				key: 'increment',
+				value: function increment(timeDelta) {
+					return this._increment(timeDelta);
+				}
+			}, {
+				key: 'setSequences',
+				value: function setSequences(sequences) {
+					this._setSequences(sequences);
+				}
+
+				/*________________________________________________________
+		  	PRIVATE CLASS METHODS
+		  ________________________________________________________*/
+
+			}, {
+				key: '_increment',
+				value: function _increment(timeDelta) {
+					var outDelta = undefined,
+					    sequenceOutTime = undefined;
+
+					// get current sequence
+					var currentSequence = this._getSequenceByTime(this._currentTime);
+
+					this._currentTime += timeDelta;
+
+					// get updated sequence with current time
+					var prospectiveSequence = this._getSequenceByTime(this._currentTime);
+
+					// we only redirect if last time was within a sequence
+					if (currentSequence != null) {
+						// check to see we have left the current sequence and that the current sequence has a next location
+						if (currentSequence !== prospectiveSequence && currentSequence.next != null) {
+
+							// if there is a prospective then check that its not the next of current
+							if (prospectiveSequence != null) {
+
+								if (currentSequence.next !== prospectiveSequence.label) {
+									// if duration is set on current the outDelta should be from after the duration
+									if (currentSequence.duration) {
+										sequenceOutTime = currentSequence.time + currentSequence.duration;
+									} else {
+										// otherwise no duration set the current sequence extends to the begining of the prospective
+										sequenceOutTime = prospectiveSequence.time;
+									}
+								} else {
+									sequenceOutTime = prospectiveSequence.time;
+								}
+							} else {
+								// if prospective is null and current is not, then a duration must be set, so use that
+								sequenceOutTime = currentSequence.time + currentSequence.duration;
+							}
+
+							outDelta = this._currentTime - sequenceOutTime;
+							// adjust time and update current
+							prospectiveSequence = this._getSequenceByLabel(currentSequence.next);
+
+							this.currentTime = prospectiveSequence.time + outDelta;
+						}
+					}
+
+					return this._getState(this._currentTime);
+				}
+			}, {
+				key: '_setSequences',
+				value: function _setSequences(sequences) {
+					// merge sequence
+					// validate check for overlaping
+					this._sequences = sequences;
+				}
+			}, {
+				key: '_getSequenceByTime',
+				value: function _getSequenceByTime(time) {
+					var sequence = undefined;
+
+					for (var i = 0; i < this._sequences.length; i++) {
+						if (this._sequences[i].time > time) {
+							break;
+						}
+						sequence = this._sequences[i];
+					}
+
+					if (sequence) {
+						// check if time is beyond last sequence
+						if (sequence.duration && time > sequence.time + sequence.duration) {
+							return null;
+						}
+						// return the current sequence
+						return sequence;
+					}
+
+					// no relevent sequences
+					return null;
+				}
+			}, {
+				key: '_getSequenceByLabel',
+				value: function _getSequenceByLabel(label) {
+					for (var i = 0; i < this._sequences.length; i++) {
+						if (this._sequences[i].label === label) {
+							return this._sequences[i];
+						}
+					}
+				}
+			}]);
+
+			return InteractiveTimeline;
+		})(_timeline2['default']);
+
+		exports['default'] = InteractiveTimeline;
+		module.exports = exports['default'];
+
+	/***/ },
+	/* 3 */
 	/***/ function(module, exports, __webpack_require__) {
 
 		"use strict";
@@ -7841,7 +8008,7 @@
 
 		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 
-		var _motionTween = __webpack_require__(3);
+		var _motionTween = __webpack_require__(4);
 
 		var _motionTween2 = _interopRequireDefault(_motionTween);
 
@@ -7874,6 +8041,10 @@
 
 				this._init(propertyKeyframes, identifier, options);
 			}
+
+			/*________________________________________________________
+		 	PUBLIC CLASS METHODS
+		 ________________________________________________________*/
 
 			_createClass(Tween, [{
 				key: "getState",
@@ -7923,16 +8094,14 @@
 			}, {
 				key: "_updateDuration",
 				value: function _updateDuration() {
-					var keyframeDuration = 0;
+					var duration = 0;
 					var inIndex = -1;
 
 					this._propertyKeyframesMap.forEach(function (keyframes, key) {
 						keyframes.forEach(function (keyframe, index) {
-							keyframeDuration = Math.max(keyframeDuration, keyframe.time);
+							duration = Math.max(duration, keyframe.time);
 						});
 					});
-
-					this._duration = keyframeDuration;
 
 					if (this._options["in"] == null) {
 						this._options["in"] = 0;
@@ -7941,7 +8110,7 @@
 						if (this._options["in"] > this._duration) {
 							throw Error("In point is set beyond the end of the tween!");
 						}
-						this._duration -= this._options["in"];
+						duration -= this._options["in"];
 					}
 
 					if (this._options.out != null && this._options.duration != null) {
@@ -7950,14 +8119,16 @@
 
 					if (this._options.duration != null) {
 						this._options.out = this._options["in"] + this._options.duration;
-						this._duration = this._options.duration;
+						duration = this._options.duration;
 					}
 
 					if (this._options.out != null) {
-						this._duration = this._options.duration = this._options.out - this._options["in"];
+						duration = this._options.out - this._options["in"];
 					} else {
-						this._options.out = this._options["in"] + this._duration;
+						this._options.out = this._options["in"] + duration;
 					}
+
+					this._options.duration = duration;
 
 					if (this._options["in"] > this._options.out) {
 						throw Error("tween in is greater than out!");
@@ -7985,7 +8156,7 @@
 			}, {
 				key: "_loopTime",
 				value: function _loopTime(time) {
-					return ((time - this._options["in"]) % this._duration + this._duration) % this._duration;
+					return ((time - this._options["in"]) % this._options.duration + this._options.duration) % this._options.duration;
 				}
 			}, {
 				key: "_resolveTime",
@@ -8052,6 +8223,11 @@
 					}
 
 					if (previousKeyframe != null && nextKeyframe != null) {
+						// check for a hold keyframe
+						if (previousKeyframe.hold != null && previousKeyframe.hold === true) {
+							return previousKeyframe.value;
+						}
+
 						value = this._tweenBetweenKeyframes(previousKeyframe, nextKeyframe, time);
 					}
 
@@ -8136,7 +8312,7 @@
 		module.exports = exports["default"];
 
 	/***/ },
-	/* 3 */
+	/* 4 */
 	/***/ function(module, exports, __webpack_require__) {
 
 		"use strict";
@@ -8153,31 +8329,31 @@
 
 		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 
-		var _Utils = __webpack_require__(4);
+		var _Utils = __webpack_require__(5);
 
 		var _Utils2 = _interopRequireDefault(_Utils);
 
-		var _Easing = __webpack_require__(5);
+		var _Easing = __webpack_require__(6);
 
 		var Easing = _interopRequireWildcard(_Easing);
 
-		var _animatorsCubicBezier = __webpack_require__(6);
+		var _animatorsCubicBezier = __webpack_require__(7);
 
 		var _animatorsCubicBezier2 = _interopRequireDefault(_animatorsCubicBezier);
 
-		var _animatorsEase = __webpack_require__(7);
+		var _animatorsEase = __webpack_require__(8);
 
 		var _animatorsEase2 = _interopRequireDefault(_animatorsEase);
 
-		var _animatorsFriction = __webpack_require__(8);
+		var _animatorsFriction = __webpack_require__(9);
 
 		var _animatorsFriction2 = _interopRequireDefault(_animatorsFriction);
 
-		var _animatorsSpring = __webpack_require__(9);
+		var _animatorsSpring = __webpack_require__(10);
 
 		var _animatorsSpring2 = _interopRequireDefault(_animatorsSpring);
 
-		var _animatorsSpringRK4 = __webpack_require__(10);
+		var _animatorsSpringRK4 = __webpack_require__(11);
 
 		var _animatorsSpringRK42 = _interopRequireDefault(_animatorsSpringRK4);
 
@@ -8362,7 +8538,7 @@
 		module.exports = exports["default"];
 
 	/***/ },
-	/* 4 */
+	/* 5 */
 	/***/ function(module, exports) {
 
 		'use strict';
@@ -8449,7 +8625,7 @@
 		module.exports = exports['default'];
 
 	/***/ },
-	/* 5 */
+	/* 6 */
 	/***/ function(module, exports) {
 
 		// t: current time, b: begInnIng value, c: change In value, d: duration
@@ -8652,7 +8828,7 @@
 		}
 
 	/***/ },
-	/* 6 */
+	/* 7 */
 	/***/ function(module, exports) {
 
 		"use strict";
@@ -8746,7 +8922,7 @@
 		module.exports = exports["default"];
 
 	/***/ },
-	/* 7 */
+	/* 8 */
 	/***/ function(module, exports, __webpack_require__) {
 
 		"use strict";
@@ -8763,7 +8939,7 @@
 
 		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 
-		var _Easing = __webpack_require__(5);
+		var _Easing = __webpack_require__(6);
 
 		var Easing = _interopRequireWildcard(_Easing);
 
@@ -8818,7 +8994,7 @@
 		module.exports = exports["default"];
 
 	/***/ },
-	/* 8 */
+	/* 9 */
 	/***/ function(module, exports) {
 
 		"use strict";
@@ -8892,7 +9068,7 @@
 		module.exports = exports["default"];
 
 	/***/ },
-	/* 9 */
+	/* 10 */
 	/***/ function(module, exports) {
 
 		"use strict";
@@ -8962,7 +9138,7 @@
 		module.exports = exports["default"];
 
 	/***/ },
-	/* 10 */
+	/* 11 */
 	/***/ function(module, exports) {
 
 		// r4k from http://mtdevans.com/2013/05/fourth-order-runge-kutta-algorithm-in-javascript-with-demo/
@@ -38337,6 +38513,450 @@
 	  delete immediateIds[id];
 	};
 	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(78).setImmediate, __webpack_require__(78).clearImmediate))
+
+/***/ },
+/* 79 */
+/***/ function(module, exports, __webpack_require__) {
+
+	"use strict";
+
+	Object.defineProperty(exports, "__esModule", {
+		value: true
+	});
+
+	var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
+
+	var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
+
+	function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+
+	var _timeline = __webpack_require__(75);
+
+	var _DEFAULT_OPTIONS = {
+		timeline: null,
+		frameWidth: null,
+		frameHeight: null,
+		identifier: "",
+		fps: 60,
+		draw: function draw(ctx, timelineState) {}
+	};
+
+	var _SHEET_DIMENSIONS = [128, 256, 512, 1024, 2048];
+
+	var singleton = Symbol();
+	var singletonEnforcer = Symbol();
+
+	var SpriteSheetBuilder = (function () {
+		_createClass(SpriteSheetBuilder, null, [{
+			key: "instance",
+			get: function get() {
+				if (!this[singleton]) {
+					this[singleton] = new SpriteSheetBuilder(singletonEnforcer);
+
+					this[singleton]._init();
+				}
+
+				return this[singleton];
+			}
+		}]);
+
+		function SpriteSheetBuilder(enforcer) {
+			_classCallCheck(this, SpriteSheetBuilder);
+
+			this._canvasBuffers = [];
+			this._frameLength = 0;
+			this._sheetData = [];
+			this._sheetIndex = -1;
+			this._sheetTimeline = null;
+
+			if (enforcer != singletonEnforcer) throw new Exception("Cannot construct singleton");
+		}
+
+		/*_______________________________________________
+	 	PUBLIC
+	 _______________________________________________*/
+
+		_createClass(SpriteSheetBuilder, [{
+			key: "build",
+			value: function build(options) {
+				this._build(options);
+			}
+		}, {
+			key: "getSpriteSheetJSONData",
+			value: function getSpriteSheetJSONData() {
+				return this._sheetData;
+			}
+		}, {
+			key: "getSpriteSheetImageData",
+			value: function getSpriteSheetImageData() {
+				return this._getSpriteSheetImageData();
+			}
+		}, {
+			key: "getSpriteSheetTimeline",
+			value: function getSpriteSheetTimeline() {
+				return this._sheetTimeline;
+			}
+		}, {
+			key: "_init",
+
+			/*_______________________________________________
+	  	PRIVATE
+	  _______________________________________________*/
+
+			value: function _init() {}
+		}, {
+			key: "_build",
+			value: function _build(options) {
+
+				this._options = _extends({}, _DEFAULT_OPTIONS, options);
+
+				// clear and reset ready to rebuild
+				this._clearBuffers();
+
+				// compile the json data beforehand, calculate the sheets needed
+				this._initiateMetrics();
+
+				// create a timeline with the frames coords set as keyframe, ready for a sprite to read
+				this._compileTimeline();
+
+				// call the draw function for every frame
+				this._executeDraw();
+			}
+		}, {
+			key: "_initiateMetrics",
+			value: function _initiateMetrics() {
+				this._frameLength = Math.floor(this._options.timeline.duration / (1000 / this._options.fps));
+
+				this._sheetData = this._determinMinimumSheetSize(this._frameLength);
+
+				for (var sheetIndex in this._sheetData) {
+					if (sheetIndex >= this._canvasBuffers.length) {
+						var canvas = document.createElement("canvas");
+						canvas.width = _SHEET_DIMENSIONS[_SHEET_DIMENSIONS.length - 1];
+						canvas.height = _SHEET_DIMENSIONS[_SHEET_DIMENSIONS.length - 1];
+
+						this._canvasBuffers.push(canvas);
+					}
+				}
+			}
+		}, {
+			key: "_compileTimeline",
+			value: function _compileTimeline() {
+				var frameIndex = 0;
+				var sheetIndex = 0;
+				var frame = undefined,
+				    time = undefined;
+
+				var propertyKeyframes = {
+					frames: []
+				};
+
+				var frames = propertyKeyframes.frames;
+
+				var _iteratorNormalCompletion = true;
+				var _didIteratorError = false;
+				var _iteratorError = undefined;
+
+				try {
+					for (var _iterator = this._sheetData[Symbol.iterator](), _step; !(_iteratorNormalCompletion = (_step = _iterator.next()).done); _iteratorNormalCompletion = true) {
+						var sheet = _step.value;
+						var _iteratorNormalCompletion2 = true;
+						var _didIteratorError2 = false;
+						var _iteratorError2 = undefined;
+
+						try {
+							for (var _iterator2 = Object.keys(sheet.frames)[Symbol.iterator](), _step2; !(_iteratorNormalCompletion2 = (_step2 = _iterator2.next()).done); _iteratorNormalCompletion2 = true) {
+								var frameKey = _step2.value;
+
+								time = frameIndex * (1000 / this._options.fps);
+								frame = sheet.frames[frameKey].frame;
+
+								frames.push({
+									value: frame.x + "," + frame.y + "," + frame.w + "," + frame.h,
+									time: time,
+									hold: true
+								});
+
+								frameIndex += 1;
+							}
+						} catch (err) {
+							_didIteratorError2 = true;
+							_iteratorError2 = err;
+						} finally {
+							try {
+								if (!_iteratorNormalCompletion2 && _iterator2["return"]) {
+									_iterator2["return"]();
+								}
+							} finally {
+								if (_didIteratorError2) {
+									throw _iteratorError2;
+								}
+							}
+						}
+
+						sheetIndex += 1;
+					}
+				} catch (err) {
+					_didIteratorError = true;
+					_iteratorError = err;
+				} finally {
+					try {
+						if (!_iteratorNormalCompletion && _iterator["return"]) {
+							_iterator["return"]();
+						}
+					} finally {
+						if (_didIteratorError) {
+							throw _iteratorError;
+						}
+					}
+				}
+
+				var tween = new _timeline.Tween(propertyKeyframes, "" + this._options.identifier, { loop: false, fillMode: 0 });
+
+				this._sheetTimeline = new _timeline.InteractiveTimeline();
+				this._sheetTimeline.addTween(tween, 0);
+			}
+		}, {
+			key: "_determinMinimumSheetSize",
+			value: function _determinMinimumSheetSize(length) {
+				var sheetIndex = arguments.length <= 1 || arguments[1] === undefined ? 0 : arguments[1];
+
+				var maxCells = undefined;
+				var sheetData = [];
+				var data = undefined;
+				var dimension = undefined;
+				// @TODO we need to be able to use non square sheets
+				var _iteratorNormalCompletion3 = true;
+				var _didIteratorError3 = false;
+				var _iteratorError3 = undefined;
+
+				try {
+					for (var _iterator3 = _SHEET_DIMENSIONS[Symbol.iterator](), _step3; !(_iteratorNormalCompletion3 = (_step3 = _iterator3.next()).done); _iteratorNormalCompletion3 = true) {
+						dimension = _step3.value;
+
+						maxCells = this._getSheetMaxCells(dimension);
+						if (length <= maxCells) {
+							break;
+						}
+					}
+				} catch (err) {
+					_didIteratorError3 = true;
+					_iteratorError3 = err;
+				} finally {
+					try {
+						if (!_iteratorNormalCompletion3 && _iterator3["return"]) {
+							_iterator3["return"]();
+						}
+					} finally {
+						if (_didIteratorError3) {
+							throw _iteratorError3;
+						}
+					}
+				}
+
+				if (length <= maxCells) {
+					data = this._composeSheetData(dimension, length, sheetIndex);
+					sheetData.push(data);
+				} else {
+
+					maxCells = this._getSheetMaxCells();
+
+					data = this._composeSheetData(dimension, maxCells, sheetIndex);
+					sheetData.push(data);
+
+					length %= maxCells;
+					sheetData.concat(this._determinMinimumSheetSize(length), sheetIndex + 1);
+				}
+
+				return sheetData;
+			}
+		}, {
+			key: "_composeSheetData",
+			value: function _composeSheetData(dimension, frameLength, sheetIndex) {
+				var frameData = undefined;
+
+				var frameIndex = sheetIndex * this._getSheetMaxCells();
+				var maxIndex = frameIndex + frameLength;
+				var maxRows = Math.floor(dimension / this._options.frameHeight);
+				var maxCols = Math.floor(dimension / this._options.frameWidth);
+				var x = undefined,
+				    y = undefined;
+				var sheetData = {
+					"frames": {},
+					"meta": {
+						"format": "RGBA8888",
+						"size": {
+							"w": dimension,
+							"h": dimension
+						},
+						"scale": "1"
+					}
+				};
+
+				for (var rowIndex = 0; rowIndex < maxRows; rowIndex++) {
+					for (var colIndex = 0; colIndex < maxCols; colIndex++) {
+
+						x = colIndex * this._options.frameWidth;
+						y = rowIndex * this._options.frameHeight;
+
+						sheetData.frames["" + this._options.identifier + frameIndex] = {
+							"frame": { "x": x, "y": y, "w": this._options.frameWidth, "h": this._options.frameHeight },
+							"rotated": false,
+							"trimmed": false,
+							"spriteSourceSize": { "x": 0, "y": 0, "w": this._options.frameWidth, "h": this._options.frameHeight },
+							"sourceSize": { "w": this._options.frameWidth, "h": this._options.frameHeight },
+							"pivot": { "x": 0.5, "y": 0.5 }
+						};
+
+						frameIndex += 1;
+
+						if (frameIndex > maxIndex) {
+							return sheetData;
+						}
+					}
+				}
+
+				return sheetData;
+			}
+		}, {
+			key: "_getSheetMaxCells",
+			value: function _getSheetMaxCells(dimension) {
+				if (dimension == null) {
+					dimension = _SHEET_DIMENSIONS[_SHEET_DIMENSIONS.length - 1];
+				}
+				return Math.floor(dimension / this._options.frameWidth) * Math.floor(dimension / this._options.frameHeight);
+			}
+		}, {
+			key: "_executeDraw",
+			value: function _executeDraw() {
+				var ctx = undefined,
+				    time = undefined,
+				    frameData = undefined;
+				var frameIndex = 0;
+				var sheetIndex = 0;
+
+				var _iteratorNormalCompletion4 = true;
+				var _didIteratorError4 = false;
+				var _iteratorError4 = undefined;
+
+				try {
+					for (var _iterator4 = this._sheetData[Symbol.iterator](), _step4; !(_iteratorNormalCompletion4 = (_step4 = _iterator4.next()).done); _iteratorNormalCompletion4 = true) {
+						var sheet = _step4.value;
+						var _iteratorNormalCompletion5 = true;
+						var _didIteratorError5 = false;
+						var _iteratorError5 = undefined;
+
+						try {
+							for (var _iterator5 = Object.keys(sheet.frames)[Symbol.iterator](), _step5; !(_iteratorNormalCompletion5 = (_step5 = _iterator5.next()).done); _iteratorNormalCompletion5 = true) {
+								var frameKey = _step5.value;
+
+								time = frameIndex * (1000 / this._options.fps);
+
+								ctx = this._canvasBuffers[sheetIndex].getContext("2d");
+
+								this._drawSprite(ctx, time, sheet.frames[frameKey].frame);
+
+								frameIndex += 1;
+							}
+						} catch (err) {
+							_didIteratorError5 = true;
+							_iteratorError5 = err;
+						} finally {
+							try {
+								if (!_iteratorNormalCompletion5 && _iterator5["return"]) {
+									_iterator5["return"]();
+								}
+							} finally {
+								if (_didIteratorError5) {
+									throw _iteratorError5;
+								}
+							}
+						}
+
+						sheetIndex += 1;
+					}
+				} catch (err) {
+					_didIteratorError4 = true;
+					_iteratorError4 = err;
+				} finally {
+					try {
+						if (!_iteratorNormalCompletion4 && _iterator4["return"]) {
+							_iterator4["return"]();
+						}
+					} finally {
+						if (_didIteratorError4) {
+							throw _iteratorError4;
+						}
+					}
+				}
+			}
+		}, {
+			key: "_drawSprite",
+			value: function _drawSprite(ctx, time, frameRect) {
+				// reset context
+				ctx.setTransform(1, 0, 0, 1, 0, 0);
+				// position context
+				ctx.translate(frameRect.x, frameRect.y);
+				// get state
+				var state = this._options.timeline.getState(time);
+				// request draw
+				this._options.draw(ctx, state);
+			}
+		}, {
+			key: "_clearBuffers",
+			value: function _clearBuffers() {
+				var _iteratorNormalCompletion6 = true;
+				var _didIteratorError6 = false;
+				var _iteratorError6 = undefined;
+
+				try {
+					for (var _iterator6 = this._canvasBuffers[Symbol.iterator](), _step6; !(_iteratorNormalCompletion6 = (_step6 = _iterator6.next()).done); _iteratorNormalCompletion6 = true) {
+						var canvas = _step6.value;
+
+						canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
+					}
+				} catch (err) {
+					_didIteratorError6 = true;
+					_iteratorError6 = err;
+				} finally {
+					try {
+						if (!_iteratorNormalCompletion6 && _iterator6["return"]) {
+							_iterator6["return"]();
+						}
+					} finally {
+						if (_didIteratorError6) {
+							throw _iteratorError6;
+						}
+					}
+				}
+			}
+		}, {
+			key: "_getSpriteSheetImageData",
+			value: function _getSpriteSheetImageData() {
+				var spriteSheetImageData = [];
+				for (var i = 0; i < this._sheetData.length; i++) {
+					spriteSheetImageData.push(this._canvasBuffers[i].getContext("2d").getImageData(0, 0, this._sheetData[i].meta.size.w, this._sheetData[i].meta.size.h));
+				}
+
+				return spriteSheetImageData;
+			}
+		}, {
+			key: "sheetLength",
+			get: function get() {
+				return this._canvasBuffers.length;
+			}
+		}, {
+			key: "frameLength",
+			get: function get() {
+				return this._frameLength;
+			}
+		}]);
+
+		return SpriteSheetBuilder;
+	})();
+
+	exports["default"] = SpriteSheetBuilder;
+	module.exports = exports["default"];
 
 /***/ }
 /******/ ]);
