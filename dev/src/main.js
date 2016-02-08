@@ -1,10 +1,10 @@
 import {InteractiveTimeline, Tween, MotionTween} from "timeline";
+
 import PIXI from "pixi.js/bin/pixi";
 
-import SpriteSheetBuilder from './sprite-sheet-builder';
-import InteractiveSprite from './interactive-sprite';
+import SpriteSheetBuilder from "../../dist/sprite-sheet-builder";
 
-let step = 0;
+import InteractiveSprite from './interactive-sprite';
 
 class Main {
 
