@@ -74,7 +74,7 @@ export default class InteractiveSprite extends PIXI.Sprite {
 
 
 	_update(deltaTime) {
-		const state = this._interactiveTimeline.increment(deltaTime / 0.06);
+		const state = this._interactiveTimeline.increment(deltaTime / PIXI.TARGET_FPMS);
 		const frame = state.get("frames").frame.split(",").map(value => parseInt(value));
 
 		this._texture.frame = new PIXI.Rectangle(frame[0], frame[1], frame[2], frame[3]);

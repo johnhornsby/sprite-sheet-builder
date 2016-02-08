@@ -31825,7 +31825,7 @@
 		}, {
 			key: "_update",
 			value: function _update(deltaTime) {
-				var state = this._interactiveTimeline.increment(deltaTime / 0.06);
+				var state = this._interactiveTimeline.increment(deltaTime / _pixiJsBinPixi2["default"].TARGET_FPMS);
 				var frame = state.get("frames").frame.split(",").map(function (value) {
 					return parseInt(value);
 				});
