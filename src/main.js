@@ -3,6 +3,7 @@ import Rectangle from './lib/geom/rectangle';
 import PIXI from "pixi.js/bin/pixi";
 
 import SpriteSheetBuilder from './sprite-sheet-builder';
+import InteractiveSprite from './interactive-sprite';
 
 let step = 0;
 
@@ -33,15 +34,17 @@ class Main {
 		this._render = ::this._render;
 		this._createTimeline();
 
-		this._frameWidth = 2048 / 16;
-		this._frameHeight = 2048 / 16;
+		this._frameWidth = 128;
+		this._frameHeight = 128;
 
+
+		// Create and build a SpriteSheet
 		const spriteSheetBuilder = SpriteSheetBuilder.instance;
 		const options = {
 			timeline: this._timeline,
 			frameWidth: this._frameWidth,
 			frameHeight: this._frameHeight,
-			identifier: "ring-",
+			identifier: "ring",
 			fps: 60,
 			draw: (ctx, timelineState) => {
 				this._draw(ctx, timelineState);
@@ -49,42 +52,22 @@ class Main {
 		}
 		spriteSheetBuilder.build(options);
 
-		const jsonData = spriteSheetBuilder.getSpriteSheetJSONData();
-		const imageData = spriteSheetBuilder.getSpriteSheetImageData();
-		const timeline = spriteSheetBuilder.getSpriteSheetTimeline();
-		const numberOfFrames = spriteSheetBuilder.frameLength;
 
-		
-
-		const baseTextureSource = document.createElement('canvas');
-		baseTextureSource.width = jsonData[0].meta.size.w;
-		baseTextureSource.height = jsonData[0].meta.size.h;
-		baseTextureSource.getContext("2d").putImageData(imageData[0],0,0);
-
-		const baseTexture = PIXI.BaseTexture.fromCanvas(baseTextureSource);
+		// Use the finished canvas, convert into PIXI texture
+		const baseTexture = PIXI.BaseTexture.fromCanvas(spriteSheetBuilder.getSpriteSheetCanvas()[0]);
 		const texture = new PIXI.Texture(baseTexture);
 		PIXI.Texture.addTextureToCache(texture, "animation");
 
-		this._parseJSON(jsonData[0].frames, baseTexture);
+		// Parse SpriteSheet data to cache textures
+		// this._parseJSON(spriteSheetBuilder.getSpriteSheetJSONData()[0].frames, baseTexture);
 
 		this._build();
 		this._render();
 
-		var textureArray = [];
-
-		for (var i=0; i < numberOfFrames; i++)
-		{
-			let texture = PIXI.Texture.fromFrame(`ring-${i}`);
-			textureArray.push(texture);
-		};
-
-		var mc = new PIXI.extras.MovieClip(textureArray);
-
-		this._rootContainer.addChild(mc);
-		mc.loop = false;
-		setTimeout(() => {
-			mc.play();
-		}, 1000);
+		// Create an interactive sprite and feed it the texture and timeline
+		const interactiveSprite = new InteractiveSprite(texture, spriteSheetBuilder.getSpriteSheetTimeline());
+		this._rootContainer.addChild(interactiveSprite);
+		interactiveSprite.play();
 	}
 
 
@@ -109,7 +92,7 @@ class Main {
 	_createTimeline() {
 		this._timeline = new InteractiveTimeline();
 
-		const propertyKeyframes = {
+		const keyframes = {
 			radius: [
 				{
 					value: 0,
@@ -125,11 +108,20 @@ class Main {
 				}]
 		}
 
-		const t = new Tween(propertyKeyframes, "ring-1", { loop: false, fillMode: 0 });
+		const tween = new Tween(keyframes, "ring-1", { loop: false, fillMode: 0 });
 
-		this._timeline.addTween(t, 0);
+		const sequences = [
+			{
+				time: 0,
+				duration: 1000,
+				label: "intro",
+				next: "intro"
+			}
+		];
+
+		this._timeline.addTween(tween, 0);
+		this._timeline.setSequences(sequences);
 	}
-
 
 
 	_draw(ctx, state) {

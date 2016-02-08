@@ -63,6 +63,8 @@ class SpriteSheetBuilder {
 
 	getSpriteSheetTimeline() { return this._sheetTimeline; }
 
+	getSpriteSheetCanvas() { return this._getSpriteSheetCanvas(); }
+
 	get sheetLength() { return this._canvasBuffers.length; }
 
 	get frameLength() { return this._frameLength; }
@@ -125,10 +127,10 @@ class SpriteSheetBuilder {
 		let frame, time;
 
 		const propertyKeyframes = {
-			frames: []
+			frame: []
 		}
 
-		const frames = propertyKeyframes.frames;
+		const frames = propertyKeyframes.frame;
 
 		for (let sheet of this._sheetData) {
 			for (let frameKey of Object.keys(sheet.frames)) {
@@ -148,10 +150,15 @@ class SpriteSheetBuilder {
 			sheetIndex += 1;
 		}
 
-		const tween = new Tween(propertyKeyframes, `${this._options.identifier}`, { loop: false, fillMode: 0 });
+		const tween = new Tween(propertyKeyframes, `frames`, { loop: false, fillMode: 0 });
 
 		this._sheetTimeline = new InteractiveTimeline();
 		this._sheetTimeline.addTween(tween, 0);
+
+		const sequences = this._options.timeline.getSequences();
+		if (sequences.length > 0) {
+			this._sheetTimeline.setSequences([...sequences]);
+		}
 	}
 
 
@@ -289,6 +296,21 @@ class SpriteSheetBuilder {
 		}
 
 		return spriteSheetImageData;
+	}
+
+
+	_getSpriteSheetCanvas() {
+		const spriteSheetCanvas = [];
+		let canvas;
+		for (let i = 0; i < this._sheetData.length; i++) {
+			canvas = document.createElement('canvas');
+			canvas.width = this._sheetData[i].meta.size.w;
+			canvas.height = this._sheetData[i].meta.size.h;
+			canvas.getContext("2d").drawImage(this._canvasBuffers[i], 0, 0);
+			spriteSheetCanvas.push(canvas);
+		}
+
+		return spriteSheetCanvas;
 	}
 } 
 
