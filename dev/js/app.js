@@ -7424,6 +7424,8 @@
 
 	var _interactiveSprite2 = _interopRequireDefault(_interactiveSprite);
 
+	var _animationHotspot = __webpack_require__(80);
+
 	var Main = (function () {
 		function Main() {
 			_classCallCheck(this, Main);
@@ -7500,43 +7502,66 @@
 		}, {
 			key: "_createTimeline",
 			value: function _createTimeline() {
-				this._timeline = new _timeline.InteractiveTimeline();
-
-				var keyframes = {
-					radius: [{
-						value: 0,
-						time: 0,
-						animatorType: _timeline.MotionTween.animatorType.cubicBezier,
-						animatorOptions: {
-							controlPoints: [.15, .66, .83, .67]
-						}
-					}, {
-						value: 50,
-						time: 1000
-					}]
-				};
-
-				var tween = new _timeline.Tween(keyframes, "ring-1", { loop: false, fillMode: 0 });
-
-				var sequences = [{
-					time: 0,
-					duration: 1000,
-					label: "intro",
-					next: "intro"
-				}];
-
-				this._timeline.addTween(tween, 0);
-				this._timeline.setSequences(sequences);
+				this._timeline = _animationHotspot.timeline;
 			}
 		}, {
 			key: "_draw",
 			value: function _draw(ctx, state) {
-				var radius = state.get("ring-1").radius;
+				var radius = undefined;
+				var alpha = undefined;
+				var width = undefined;
+
+				radius = state.get("ripple").radius;
+				alpha = state.get("ripple").alpha;
 
 				ctx.beginPath();
-				ctx.strokeStyle = "white";
+				ctx.strokeStyle = "rgba(255,255,255," + alpha + ")";
+				ctx.lineWidth = 1;
 				ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
 				ctx.stroke();
+
+				radius = state.get("ripple2").radius;
+				alpha = state.get("ripple2").alpha;
+
+				ctx.beginPath();
+				ctx.strokeStyle = "rgba(255,255,255," + alpha + ")";
+				ctx.lineWidth = 1;
+				ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
+				ctx.stroke();
+
+				radius = state.get("ripple3").radius;
+				alpha = state.get("ripple3").alpha;
+
+				ctx.beginPath();
+				ctx.strokeStyle = "rgba(255,255,255," + alpha + ")";
+				ctx.lineWidth = 1;
+				ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
+				ctx.stroke();
+
+				radius = state.get("ripple4").radius;
+				alpha = state.get("ripple4").alpha;
+
+				ctx.beginPath();
+				ctx.strokeStyle = "rgba(255,255,255," + alpha + ")";
+				ctx.lineWidth = 1;
+				ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
+				ctx.stroke();
+
+				radius = state.get("ring").radius;
+				alpha = state.get("ring").alpha;
+				width = state.get("ring").width;
+
+				ctx.beginPath();
+				ctx.strokeStyle = "rgba(255,255,255," + alpha + ")";
+				ctx.lineWidth = width;
+				ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
+				ctx.stroke();
+
+				width = state.get("plus").width;
+
+				ctx.fillStyle = "white";
+				ctx.fillRect((this._frameWidth - width) / 2, this._frameHeight / 2, width, 1);
+				ctx.fillRect(this._frameWidth / 2, (this._frameHeight - width) / 2, 1, width);
 			}
 		}, {
 			key: "_parseJSON",
@@ -7748,9 +7773,9 @@
 				value: function _addTween(tween) {
 					var time = arguments.length <= 1 || arguments[1] === undefined ? 0 : arguments[1];
 
-					if (this._tweens.length === 0 || this._tweens.find(function (tweenObjectData) {
+					if (this._tweens.find(function (tweenObjectData) {
 						return tweenObjectData.tween === tween;
-					}) === false) {
+					}) === undefined) {
 						this._tweens.push({
 							tween: tween,
 							time: time
@@ -8209,10 +8234,18 @@
 					}
 
 					if (previousKeyframe == null) {
+						if (time < this._options["in"] && this._options.fillMode !== Tween.FILL_MODE.BACKWARD && this._options.fillMode !== Tween.FILL_MODE.BOTH) {
+							return value;
+						}
+
 						return nextKeyframe.value;
 					}
 
 					if (nextKeyframe == null) {
+						if (time > this._options.out && this._options.fillMode !== Tween.FILL_MODE.FORWARD && this._options.fillMode !== Tween.FILL_MODE.BOTH) {
+							return value;
+						}
+
 						return previousKeyframe.value;
 					}
 
@@ -40918,6 +40951,146 @@
 
 	exports["default"] = InteractiveSprite;
 	module.exports = exports["default"];
+
+/***/ },
+/* 80 */
+/***/ function(module, exports, __webpack_require__) {
+
+	"use strict";
+
+	Object.defineProperty(exports, "__esModule", {
+		value: true
+	});
+
+	var _timeline = __webpack_require__(75);
+
+	var ringKyframes = {
+		radius: [{
+			value: 70,
+			time: 0
+		}, {
+			value: 19,
+			time: 200
+		}],
+		alpha: [{
+			value: 0,
+			time: 30
+		}, {
+			value: 1,
+			time: 100
+		}],
+		width: [{
+			value: 6,
+			time: 0
+		}, {
+			value: 2,
+			time: 200
+		}]
+	};
+	var ringTween = new _timeline.Tween(ringKyframes, "ring", { loop: false, fillMode: _timeline.Tween.FILL_MODE.FORWARD });
+
+	var rippleKyframes = {
+		radius: [{
+			value: 19,
+			time: 0
+		}, {
+			value: 50,
+			time: 300
+		}],
+		alpha: [{
+			value: 1,
+			time: 0
+		}, {
+			value: 0,
+			time: 300
+		}]
+	};
+
+	var rippleTween = new _timeline.Tween(rippleKyframes, "ripple", { loop: false, fillMode: 0 });
+	var ripple2Tween = new _timeline.Tween(rippleKyframes, "ripple2", { loop: false, fillMode: 0 });
+
+	var ripple3Kyframes = {
+		radius: [{
+			value: 19,
+			time: 0,
+			animatorType: _timeline.MotionTween.animatorType.ease,
+			animatorOptions: {
+				easingFunction: _timeline.MotionTween.easingFunction.easeOutExpo
+			}
+		}, {
+			value: 42,
+			time: 400
+		}],
+		alpha: [{
+			value: 1,
+			time: 0,
+			animatorType: _timeline.MotionTween.animatorType.ease,
+			animatorOptions: {
+				easingFunction: _timeline.MotionTween.easingFunction.easeOutExpo
+			}
+		}, {
+			value: 0.2,
+			time: 400
+		}]
+	};
+	var ripple3Tween = new _timeline.Tween(ripple3Kyframes, "ripple3", { loop: false, fillMode: _timeline.Tween.FILL_MODE.FORWARD });
+
+	var ripple4Kyframes = {
+		radius: [{
+			value: 19,
+			time: 0,
+			animatorType: _timeline.MotionTween.animatorType.ease,
+			animatorOptions: {
+				easingFunction: _timeline.MotionTween.easingFunction.easeOutExpo
+			}
+		}, {
+			value: 28,
+			time: 288
+		}],
+		alpha: [{
+			value: 1,
+			time: 0,
+			animatorType: _timeline.MotionTween.animatorType.ease,
+			animatorOptions: {
+				easingFunction: _timeline.MotionTween.easingFunction.easeOutExpo
+			}
+		}, {
+			value: 0.4,
+			time: 288
+		}]
+	};
+	var ripple4Tween = new _timeline.Tween(ripple4Kyframes, "ripple4", { loop: false, fillMode: _timeline.Tween.FILL_MODE.FORWARD });
+
+	var plusKyframes = {
+		width: [{
+			value: 0,
+			time: 510
+		}, {
+			value: 20,
+			time: 830
+		}]
+	};
+	var plusTween = new _timeline.Tween(plusKyframes, "plus", { loop: false, fillMode: _timeline.Tween.FILL_MODE.FORWARD });
+
+	var sequences = [{
+		time: 0,
+		duration: 830,
+		label: "intro"
+	}];
+
+	// next: "intro"
+	var it = new _timeline.InteractiveTimeline();
+
+	it.addTween(ringTween, 0);
+	it.addTween(rippleTween, 130);
+	it.addTween(ripple2Tween, 260);
+	it.addTween(ripple3Tween, 390);
+	it.addTween(ripple4Tween, 520);
+	it.addTween(plusTween, 0);
+	it.setSequences(sequences);
+
+	var timeline = it;
+	exports.timeline = timeline;
 
 /***/ }
 /******/ ]);

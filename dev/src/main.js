@@ -6,6 +6,8 @@ import SpriteSheetBuilder from "../../dist/sprite-sheet-builder";
 
 import InteractiveSprite from './interactive-sprite';
 
+import {timeline} from './animation/hotspot'
+
 class Main {
 
 
@@ -89,47 +91,68 @@ class Main {
 
 
 	_createTimeline() {
-		this._timeline = new InteractiveTimeline();
-
-		const keyframes = {
-			radius: [
-				{
-					value: 0,
-				 	time: 0,
-				 	animatorType: MotionTween.animatorType.cubicBezier,
-					animatorOptions: {
-						controlPoints: [.15, .66, .83, .67]
-					}
-				},
-				{
-					value: 50,
-					time: 1000,
-				}]
-		}
-
-		const tween = new Tween(keyframes, "ring-1", { loop: false, fillMode: 0 });
-
-		const sequences = [
-			{
-				time: 0,
-				duration: 1000,
-				label: "intro",
-				next: "intro"
-			}
-		];
-
-		this._timeline.addTween(tween, 0);
-		this._timeline.setSequences(sequences);
+		this._timeline = timeline
 	}
 
 
 	_draw(ctx, state) {
-		const radius = state.get("ring-1").radius;
+		let radius;
+		let alpha;
+		let width;
+
+		radius = state.get("ripple").radius;
+		alpha = state.get("ripple").alpha;
 
 		ctx.beginPath();
-		ctx.strokeStyle = "white";
+		ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+		ctx.lineWidth = 1;
 		ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
 		ctx.stroke();
+
+		radius = state.get("ripple2").radius;
+		alpha = state.get("ripple2").alpha;
+
+		ctx.beginPath();
+		ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+		ctx.lineWidth = 1;
+		ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
+		ctx.stroke();
+
+		radius = state.get("ripple3").radius;
+		alpha = state.get("ripple3").alpha;
+
+		ctx.beginPath();
+		ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+		ctx.lineWidth = 1;
+		ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
+		ctx.stroke();
+
+		radius = state.get("ripple4").radius;
+		alpha = state.get("ripple4").alpha;
+
+		ctx.beginPath();
+		ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+		ctx.lineWidth = 1;
+		ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
+		ctx.stroke();
+
+
+		radius = state.get("ring").radius;
+		alpha = state.get("ring").alpha;
+		width = state.get("ring").width;
+
+		ctx.beginPath();
+		ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+		ctx.lineWidth = width;
+		ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
+		ctx.stroke();
+
+		width = state.get("plus").width;
+
+		ctx.fillStyle = "white";
+		ctx.fillRect((this._frameWidth - width) / 2, this._frameHeight / 2, width, 1);
+		ctx.fillRect(this._frameWidth / 2, (this._frameHeight - width) / 2, 1, width);
+
 	}
 
 

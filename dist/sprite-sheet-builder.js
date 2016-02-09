@@ -683,9 +683,9 @@ return /******/ (function(modules) { // webpackBootstrap
 				value: function _addTween(tween) {
 					var time = arguments.length <= 1 || arguments[1] === undefined ? 0 : arguments[1];
 
-					if (this._tweens.length === 0 || this._tweens.find(function (tweenObjectData) {
+					if (this._tweens.find(function (tweenObjectData) {
 						return tweenObjectData.tween === tween;
-					}) === false) {
+					}) === undefined) {
 						this._tweens.push({
 							tween: tween,
 							time: time
@@ -1144,10 +1144,18 @@ return /******/ (function(modules) { // webpackBootstrap
 					}
 
 					if (previousKeyframe == null) {
+						if (time < this._options["in"] && this._options.fillMode !== Tween.FILL_MODE.BACKWARD && this._options.fillMode !== Tween.FILL_MODE.BOTH) {
+							return value;
+						}
+
 						return nextKeyframe.value;
 					}
 
 					if (nextKeyframe == null) {
+						if (time > this._options.out && this._options.fillMode !== Tween.FILL_MODE.FORWARD && this._options.fillMode !== Tween.FILL_MODE.BOTH) {
+							return value;
+						}
+
 						return previousKeyframe.value;
 					}
 
