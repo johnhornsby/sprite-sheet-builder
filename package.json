@@ -2,7 +2,7 @@
   "name": "sprite-sheet-builder",
   "version": "1.0.0",
   "description": "Sprite Sheet Builder Project",
-  "main": "server.js",
+  "main": "dist/sprite-sheet-builder.js",
   "scripts": {
     "build:lib": "babel src --out-dir lib",
     "build:umd": "webpack",
