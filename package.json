@@ -18,6 +18,6 @@
   },
   "dependencies": {
     "babel-polyfill": "^6.3.14",
-    "timeline": "git+https://github.com/johnhornsby/timeline.git#1eafd6a"
+    "timeline": "git+https://github.com/johnhornsby/timeline.git#653cdb5"
   }
 }

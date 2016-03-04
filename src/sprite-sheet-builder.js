@@ -150,10 +150,12 @@ class SpriteSheetBuilder {
 			sheetIndex += 1;
 		}
 
-		const tween = new Tween(propertyKeyframes, `frames`, { loop: false, fillMode: 0 });
+		// const tween = new Tween(propertyKeyframes, `frames`, { loop: false, fillMode: 0 });
+		const tween = new Tween(`frames`);
+		tween.addKeyframes(propertyKeyframes);
 
-		this._sheetTimeline = new InteractiveTimeline();
-		this._sheetTimeline.addTween(tween, 0);
+		this._sheetTimeline = new InteractiveTimeline("sprite-sheet-timeline");
+		this._sheetTimeline.addChild(tween, { loop: false, fillMode: "none" });
 
 		const sequences = this._options.timeline.getSequences();
 		if (sequences.length > 0) {

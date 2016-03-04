@@ -7446,6 +7446,7 @@
 				var _this = this;
 
 				this._render = this._render.bind(this);
+
 				this._createTimeline();
 
 				this._frameWidth = 128;
@@ -7480,6 +7481,13 @@
 				var interactiveSprite = new _interactiveSprite2["default"](texture, spriteSheetBuilder.getSpriteSheetTimeline());
 				this._rootContainer.addChild(interactiveSprite);
 				interactiveSprite.play();
+
+				// render out the complete sprite sheet so we can see it
+				var canvas = document.createElement('canvas');
+				canvas.width = spriteSheetBuilder.getSpriteSheetCanvas()[0].width;
+				canvas.height = spriteSheetBuilder.getSpriteSheetCanvas()[0].height;
+				canvas.getContext("2d").drawImage(spriteSheetBuilder.getSpriteSheetCanvas()[0], 0, 0);
+				document.body.appendChild(canvas);
 			}
 		}, {
 			key: "_build",
@@ -7511,57 +7519,118 @@
 				var alpha = undefined;
 				var width = undefined;
 
-				radius = state.get("ripple").radius;
-				alpha = state.get("ripple").alpha;
+				for (var i = 0; i < state.children.length; i++) {
+					switch (state.children[i].name) {
 
-				ctx.beginPath();
-				ctx.strokeStyle = "rgba(255,255,255," + alpha + ")";
-				ctx.lineWidth = 1;
-				ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
-				ctx.stroke();
+						case "ripple":
+							radius = state.children[i].properties.radius;
+							alpha = state.children[i].properties.alpha;
 
-				radius = state.get("ripple2").radius;
-				alpha = state.get("ripple2").alpha;
+							ctx.beginPath();
+							ctx.strokeStyle = "rgba(255,255,255," + alpha + ")";
+							ctx.lineWidth = 1;
+							ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
+							ctx.stroke();
+							break;
 
-				ctx.beginPath();
-				ctx.strokeStyle = "rgba(255,255,255," + alpha + ")";
-				ctx.lineWidth = 1;
-				ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
-				ctx.stroke();
+						case "ripple3":
+							radius = state.children[i].properties.radius;
+							alpha = state.children[i].properties.alpha;
 
-				radius = state.get("ripple3").radius;
-				alpha = state.get("ripple3").alpha;
+							ctx.beginPath();
+							ctx.strokeStyle = "rgba(255,255,255," + alpha + ")";
+							ctx.lineWidth = 1;
+							ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
+							ctx.stroke();
+							break;
 
-				ctx.beginPath();
-				ctx.strokeStyle = "rgba(255,255,255," + alpha + ")";
-				ctx.lineWidth = 1;
-				ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
-				ctx.stroke();
+						case "ripple4":
+							radius = state.children[i].properties.radius;
+							alpha = state.children[i].properties.alpha;
 
-				radius = state.get("ripple4").radius;
-				alpha = state.get("ripple4").alpha;
+							ctx.beginPath();
+							ctx.strokeStyle = "rgba(255,255,255," + alpha + ")";
+							ctx.lineWidth = 1;
+							ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
+							ctx.stroke();
+							break;
 
-				ctx.beginPath();
-				ctx.strokeStyle = "rgba(255,255,255," + alpha + ")";
-				ctx.lineWidth = 1;
-				ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
-				ctx.stroke();
+						case "ring":
+							radius = state.children[i].properties.radius;
+							alpha = state.children[i].properties.alpha;
+							width = state.children[i].properties.width;
 
-				radius = state.get("ring").radius;
-				alpha = state.get("ring").alpha;
-				width = state.get("ring").width;
+							ctx.beginPath();
+							ctx.strokeStyle = "rgba(255,255,255," + alpha + ")";
+							ctx.lineWidth = width;
+							ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
+							ctx.stroke();
+							break;
 
-				ctx.beginPath();
-				ctx.strokeStyle = "rgba(255,255,255," + alpha + ")";
-				ctx.lineWidth = width;
-				ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
-				ctx.stroke();
+						case "plus":
+							width = state.children[i].properties.width;
 
-				width = state.get("plus").width;
+							ctx.fillStyle = "white";
+							ctx.fillRect((this._frameWidth - width) / 2, this._frameHeight / 2, width, 1);
+							ctx.fillRect(this._frameWidth / 2, (this._frameHeight - width) / 2, 1, width);
+							break;
 
-				ctx.fillStyle = "white";
-				ctx.fillRect((this._frameWidth - width) / 2, this._frameHeight / 2, width, 1);
-				ctx.fillRect(this._frameWidth / 2, (this._frameHeight - width) / 2, 1, width);
+					}
+				}
+
+				// radius = state.get("ripple").radius;
+				// alpha = state.get("ripple").alpha;
+
+				// ctx.beginPath();
+				// ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+				// ctx.lineWidth = 1;
+				// ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
+				// ctx.stroke();
+
+				// if (state.get("ripple2")) {
+				// 	radius = state.get("ripple2").radius;
+				// 	alpha = state.get("ripple2").alpha;
+
+				// 	ctx.beginPath();
+				// 	ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+				// 	ctx.lineWidth = 1;
+				// 	ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
+				// 	ctx.stroke();
+				// }
+
+				// radius = state.get("ripple3").radius;
+				// alpha = state.get("ripple3").alpha;
+
+				// ctx.beginPath();
+				// ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+				// ctx.lineWidth = 1;
+				// ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
+				// ctx.stroke();
+
+				// radius = state.get("ripple4").radius;
+				// alpha = state.get("ripple4").alpha;
+
+				// ctx.beginPath();
+				// ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+				// ctx.lineWidth = 1;
+				// ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
+				// ctx.stroke();
+
+				// radius = state.get("ring").radius;
+				// alpha = state.get("ring").alpha;
+				// width = state.get("ring").width;
+
+				// ctx.beginPath();
+				// ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+				// ctx.lineWidth = width;
+				// ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
+				// ctx.stroke();
+
+				// width = state.get("plus").width;
+
+				// ctx.fillStyle = "white";
+				// ctx.fillRect((this._frameWidth - width) / 2, this._frameHeight / 2, width, 1);
+				// ctx.fillRect(this._frameWidth / 2, (this._frameHeight - width) / 2, 1, width);
 			}
 		}, {
 			key: "_parseJSON",
@@ -7683,7 +7752,7 @@
 
 		var _timeline2 = _interopRequireDefault(_timeline);
 
-		var _interactiveTimeline = __webpack_require__(2);
+		var _interactiveTimeline = __webpack_require__(13);
 
 		var _interactiveTimeline2 = _interopRequireDefault(_interactiveTimeline);
 
@@ -7702,36 +7771,66 @@
 
 	/***/ },
 	/* 1 */
-	/***/ function(module, exports) {
+	/***/ function(module, exports, __webpack_require__) {
 
-		"use strict";
+		'use strict';
 
-		Object.defineProperty(exports, "__esModule", {
+		Object.defineProperty(exports, '__esModule', {
 			value: true
 		});
 
 		var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
 
-		var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
+		var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ('value' in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
 
-		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+		var _get = function get(_x, _x2, _x3) { var _again = true; _function: while (_again) { var object = _x, property = _x2, receiver = _x3; _again = false; if (object === null) object = Function.prototype; var desc = Object.getOwnPropertyDescriptor(object, property); if (desc === undefined) { var parent = Object.getPrototypeOf(object); if (parent === null) { return undefined; } else { _x = parent; _x2 = property; _x3 = receiver; _again = true; desc = parent = undefined; continue _function; } } else if ('value' in desc) { return desc.value; } else { var getter = desc.get; if (getter === undefined) { return undefined; } return getter.call(receiver); } } };
 
-		var TIMELINE_DEFAULT_OPTIONS = {
-			loop: false,
+		function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { 'default': obj }; }
+
+		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError('Cannot call a class as a function'); } }
+
+		function _inherits(subClass, superClass) { if (typeof superClass !== 'function' && superClass !== null) { throw new TypeError('Super expression must either be null or a function, not ' + typeof superClass); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } }); if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass; }
+
+		var _timelineState = __webpack_require__(2);
+
+		var _timelineState2 = _interopRequireDefault(_timelineState);
+
+		var _tween = __webpack_require__(3);
+
+		var _tween2 = _interopRequireDefault(_tween);
+
+		var _TIMELINE_DEFAULT_OPTIONS = {
 			fps: 60
 		};
 
-		var Timeline = (function () {
-			function Timeline(options) {
+		var _CHILD_DEFAULT_OPTIONS = {
+			fillMode: "both",
+			'in': 0,
+			loop: false,
+			out: null,
+			time: 0
+		};
+
+		var Timeline = (function (_Tween) {
+			_inherits(Timeline, _Tween);
+
+			_createClass(Timeline, null, [{
+				key: 'FILL_MODE',
+				value: {
+					NOME: "none",
+					FORWARD: "forward",
+					BACKWARD: "backward",
+					BOTH: "both"
+				},
+				enumerable: true
+			}]);
+
+			function Timeline(name, options) {
 				_classCallCheck(this, Timeline);
 
+				_get(Object.getPrototypeOf(Timeline.prototype), 'constructor', this).call(this, name);
+				this._children = [];
 				this._currentTime = 0;
-				this._loop = null;
-				this._options = null;
-				this._duration = null;
-				this._tweens = [];
-
-				this._init(options);
 			}
 
 			/*________________________________________________________
@@ -7744,69 +7843,143 @@
 					return this;
 				}
 			}, {
-				key: "next",
+				key: 'next',
 				value: function next() {
 					return this._next();
 				}
 			}, {
-				key: "addTween",
-				value: function addTween(tween, time) {
-					this._addTween(tween, time);
+				key: 'addChild',
+				value: function addChild(child, options) {
+					this._addChild(child, options);
 				}
 			}, {
-				key: "getState",
-				value: function getState(time) {
-					return this._getState(time);
-				}
-			}, {
-				key: "_init",
+				key: '_init',
 
 				/*________________________________________________________
 		  	PRIVATE CLASS METHODS
 		  ________________________________________________________*/
 
-				value: function _init(options) {
-					this._options = _extends({}, TIMELINE_DEFAULT_OPTIONS, options);
-				}
-			}, {
-				key: "_addTween",
-				value: function _addTween(tween) {
-					var time = arguments.length <= 1 || arguments[1] === undefined ? 0 : arguments[1];
+				value: function _init(name, options) {
+					_get(Object.getPrototypeOf(Timeline.prototype), '_init', this).call(this, name);
 
-					if (this._tweens.find(function (tweenObjectData) {
-						return tweenObjectData.tween === tween;
-					}) === undefined) {
-						this._tweens.push({
-							tween: tween,
-							time: time
-						});
-						this._updateDuration();
-					}
+					this._options = _extends({}, _TIMELINE_DEFAULT_OPTIONS, options);
 				}
 			}, {
-				key: "_updateDuration",
-				value: function _updateDuration() {
+				key: '_addChild',
+				value: function _addChild(child, options) {
+					// clone options into settings property
+					var o = {
+						child: child,
+						settings: _extends({}, _CHILD_DEFAULT_OPTIONS, options)
+					};
+
+					// set out property if not already set
+					if (o.settings.out == null) {
+						o.settings.out = o.settings.time + child.duration;
+					}
+
+					this._children.push(o);
+
+					var absoluteDuration = this._getChildrenDuration();
+
+					this._duration = absoluteDuration;
+				}
+			}, {
+				key: '_removeChild',
+				value: function _removeChild() {}
+			}, {
+				key: '_getChildrenDuration',
+				value: function _getChildrenDuration() {
+					var duration = 0;
+
+					this._children.forEach(function (childObjectData, index) {
+
+						duration = Math.max(duration, childObjectData.settings.out);
+					});
+
+					return duration;
+				}
+			}, {
+				key: '_getState',
+				value: function _getState(time) {
 					var _this = this;
 
-					this._duration = 0;
-					this._tweens.forEach(function (tweenObjectData, index) {
-						_this._duration = Math.max(_this._duration, tweenObjectData.time + tweenObjectData.tween.duration);
+					var state = new _timelineState2['default'](_timelineState2['default'].TYPE.TIMELINE, this._name);
+					var tweenState = undefined;
+
+					var resolvedTime = undefined;
+
+					this._children.forEach(function (childObjectData, index) {
+
+						// loop is accounted for here, fill is automatically built into tween
+						resolvedTime = _this._resolveChildRelativeTime(time, childObjectData.settings);
+
+						tweenState = childObjectData.child.getState(resolvedTime);
+
+						state.addChild(tweenState);
 					});
+
+					return state;
+				}
+
+				/**
+		   * Method takes any time and wraps it accordingly to be within in and out points
+		   *
+		   * @private
+		   * @param {Number} time Time in milisecond
+		   * @return Number
+		   */
+			}, {
+				key: '_loopTime',
+				value: function _loopTime(time, childSettings) {
+					var childEditDuration = childSettings.out - childSettings['in'];
+					var realativeTime = time - childSettings['in'];
+					var loopedTime = (realativeTime % childEditDuration + childEditDuration) % childEditDuration;
+					return childSettings['in'] + loopedTime;
+				}
+
+				/**
+		   * Method takes any time and checks whether the time value requires wrapping, if so then returns wrapped time
+		   *
+		   * @private
+		   * @param {Number} time Time in milisecond
+		   * @return Number
+		   */
+			}, {
+				key: '_resolveChildRelativeTime',
+				value: function _resolveChildRelativeTime(time, childSettings) {
+					// now we have the beginning position of the child we can determine the time relative to the child
+					var childRelativeTime = time - childSettings.time;
+
+					if (time < childSettings['in']) {
+						if (childSettings.fillMode === Timeline.FILL_MODE.BACKWARD || childSettings.fillMode === Timeline.FILL_MODE.BOTH) {
+
+							if (childSettings.loop) {
+								return this._loopTime(time, childSettings) - childSettings.time;
+							} else {
+								return childSettings['in'] - childSettings.time;
+							}
+						} else {
+							return undefined;
+						}
+					}
+
+					if (time > childSettings.out) {
+						if (childSettings.fillMode === Timeline.FILL_MODE.FORWARD || childSettings.fillMode === Timeline.FILL_MODE.BOTH) {
+							if (childSettings.loop) {
+								return this._loopTime(time, childSettings) - childSettings.time;
+							} else {
+								return childSettings.out - childSettings.time;
+							}
+						} else {
+							return undefined;
+						}
+					}
+
+					return childRelativeTime;
 				}
 			}, {
-				key: "_getState",
-				value: function _getState(time) {
-					var stateMap = new Map();
-					// iterate over map properies
-					this._tweens.forEach(function (tweenObjectData, index) {
-						// interate over object properties
-						stateMap.set(tweenObjectData.tween.identifier, tweenObjectData.tween.getState(time - tweenObjectData.time));
-					});
-					// return map
-					return stateMap;
-				}
-			}, {
-				key: "_next",
+				key: '_next',
 				value: function _next() {
 					var time = this._currentTime;
 
@@ -7824,39 +7997,114 @@
 					}
 				}
 			}, {
-				key: "duration",
-				set: function set(duration) {
-					this._duration = this._options.duration = duration;
-				},
-				get: function get() {
-					return this._duration;
-				}
-			}, {
-				key: "loop",
-				set: function set(boolean) {
-					this._loop = boolean;
-				},
-				get: function get() {
-					return this._loop;
-				}
-			}, {
-				key: "currentTime",
+				key: 'currentTime',
 				set: function set(time) {
 					this._currentTime = time;
 				},
 				get: function get() {
 					return this._currentTime;
 				}
+			}, {
+				key: 'duration',
+				get: function get() {
+					return this._duration;
+				}
 			}]);
 
 			return Timeline;
-		})();
+		})(_tween2['default']);
 
-		exports["default"] = Timeline;
-		module.exports = exports["default"];
+		exports['default'] = Timeline;
+		module.exports = exports['default'];
 
 	/***/ },
 	/* 2 */
+	/***/ function(module, exports) {
+
+		"use strict";
+
+		Object.defineProperty(exports, "__esModule", {
+			value: true
+		});
+
+		var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
+
+		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+
+		var TimelineState = (function () {
+			_createClass(TimelineState, null, [{
+				key: "TYPE",
+				value: {
+					TWEEN: "tween",
+					TIMELINE: "timeline"
+				},
+				enumerable: true
+			}]);
+
+			function TimelineState(type, name) {
+				_classCallCheck(this, TimelineState);
+
+				this._type = TimelineState.TYPE.TWEEN;
+				this._children = null;
+				this._properties = null;
+				this._name = null;
+
+				this._type = type;
+				this._name = name;
+
+				this._properties = {};
+
+				if (this._type == TimelineState.TYPE.TIMELINE) {
+					this._children = [];
+				}
+			}
+
+			_createClass(TimelineState, [{
+				key: "addProperty",
+				value: function addProperty(key, value) {
+					this._properties[key] = value;
+				}
+			}, {
+				key: "addChild",
+				value: function addChild(timelineStateInstance) {
+					this._children.push(timelineStateInstance);
+				}
+			}, {
+				key: "type",
+				get: function get() {
+					return this._type;
+				}
+			}, {
+				key: "name",
+				get: function get() {
+					return this._name;
+				}
+			}, {
+				key: "children",
+				get: function get() {
+					// if (this._type !== TimelineState.TYPE.TIMELINE) {
+					// 	throw Error("TimelineState instance is not of type Timeline and there does not have children!");
+					// }
+					return this._children;
+				}
+			}, {
+				key: "properties",
+				get: function get() {
+					// if (this._type !== TimelineState.TYPE.TWEEN) {
+					// 	throw Error("TimelineState instance is not of type Tween and there does not have properties!");
+					// }
+					return this._properties;
+				}
+			}]);
+
+			return TimelineState;
+		})();
+
+		exports["default"] = TimelineState;
+		module.exports = exports["default"];
+
+	/***/ },
+	/* 3 */
 	/***/ function(module, exports, __webpack_require__) {
 
 		'use strict';
@@ -7865,200 +8113,36 @@
 			value: true
 		});
 
-		var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ('value' in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
+		var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
 
-		var _get = function get(_x, _x2, _x3) { var _again = true; _function: while (_again) { var object = _x, property = _x2, receiver = _x3; _again = false; if (object === null) object = Function.prototype; var desc = Object.getOwnPropertyDescriptor(object, property); if (desc === undefined) { var parent = Object.getPrototypeOf(object); if (parent === null) { return undefined; } else { _x = parent; _x2 = property; _x3 = receiver; _again = true; desc = parent = undefined; continue _function; } } else if ('value' in desc) { return desc.value; } else { var getter = desc.get; if (getter === undefined) { return undefined; } return getter.call(receiver); } } };
+		var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ('value' in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
 
 		function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { 'default': obj }; }
 
 		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError('Cannot call a class as a function'); } }
 
-		function _inherits(subClass, superClass) { if (typeof superClass !== 'function' && superClass !== null) { throw new TypeError('Super expression must either be null or a function, not ' + typeof superClass); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } }); if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass; }
-
-		var _timeline = __webpack_require__(1);
-
-		var _timeline2 = _interopRequireDefault(_timeline);
-
-		var InteractiveTimeline = (function (_Timeline) {
-			_inherits(InteractiveTimeline, _Timeline);
-
-			function InteractiveTimeline(options) {
-				_classCallCheck(this, InteractiveTimeline);
-
-				_get(Object.getPrototypeOf(InteractiveTimeline.prototype), 'constructor', this).call(this, options);
-				this._sequences = [];
-			}
-
-			/*________________________________________________________
-		 	PUBLIC CLASS METHODS
-		 ________________________________________________________*/
-
-			_createClass(InteractiveTimeline, [{
-				key: 'increment',
-				value: function increment(timeDelta) {
-					return this._increment(timeDelta);
-				}
-			}, {
-				key: 'setSequences',
-				value: function setSequences(sequences) {
-					this._setSequences(sequences);
-				}
-			}, {
-				key: 'getSequences',
-				value: function getSequences() {
-					return this._sequences;
-				}
-
-				/*________________________________________________________
-		  	PRIVATE CLASS METHODS
-		  ________________________________________________________*/
-
-			}, {
-				key: '_increment',
-				value: function _increment(timeDelta) {
-					var outDelta = undefined,
-					    sequenceOutTime = undefined;
-
-					// get current sequence
-					var currentSequence = this._getSequenceByTime(this._currentTime);
-
-					this._currentTime += timeDelta;
-
-					// get updated sequence with current time
-					var prospectiveSequence = this._getSequenceByTime(this._currentTime);
-
-					// we only redirect if last time was within a sequence
-					if (currentSequence != null) {
-						// check to see we have left the current sequence and that the current sequence has a next location
-						if (currentSequence !== prospectiveSequence && currentSequence.next != null) {
-
-							// if there is a prospective then check that its not the next of current
-							if (prospectiveSequence != null) {
-
-								if (currentSequence.next !== prospectiveSequence.label) {
-									// if duration is set on current the outDelta should be from after the duration
-									if (currentSequence.duration) {
-										sequenceOutTime = currentSequence.time + currentSequence.duration;
-									} else {
-										// otherwise no duration set the current sequence extends to the begining of the prospective
-										sequenceOutTime = prospectiveSequence.time;
-									}
-								} else {
-									sequenceOutTime = prospectiveSequence.time;
-								}
-							} else {
-								// if prospective is null and current is not, then a duration must be set, so use that
-								sequenceOutTime = currentSequence.time + currentSequence.duration;
-							}
-
-							outDelta = this._currentTime - sequenceOutTime;
-							// adjust time and update current
-							prospectiveSequence = this._getSequenceByLabel(currentSequence.next);
-
-							this.currentTime = prospectiveSequence.time + outDelta;
-						}
-					}
-
-					return this._getState(this._currentTime);
-				}
-			}, {
-				key: '_setSequences',
-				value: function _setSequences(sequences) {
-					// merge sequence
-					// validate check for overlaping
-					this._sequences = sequences;
-				}
-			}, {
-				key: '_getSequenceByTime',
-				value: function _getSequenceByTime(time) {
-					var sequence = undefined;
-
-					for (var i = 0; i < this._sequences.length; i++) {
-						if (this._sequences[i].time > time) {
-							break;
-						}
-						sequence = this._sequences[i];
-					}
-
-					if (sequence) {
-						// check if time is beyond last sequence
-						if (sequence.duration && time > sequence.time + sequence.duration) {
-							return null;
-						}
-						// return the current sequence
-						return sequence;
-					}
-
-					// no relevent sequences
-					return null;
-				}
-			}, {
-				key: '_getSequenceByLabel',
-				value: function _getSequenceByLabel(label) {
-					for (var i = 0; i < this._sequences.length; i++) {
-						if (this._sequences[i].label === label) {
-							return this._sequences[i];
-						}
-					}
-				}
-			}]);
-
-			return InteractiveTimeline;
-		})(_timeline2['default']);
-
-		exports['default'] = InteractiveTimeline;
-		module.exports = exports['default'];
-
-	/***/ },
-	/* 3 */
-	/***/ function(module, exports, __webpack_require__) {
-
-		"use strict";
-
-		Object.defineProperty(exports, "__esModule", {
-			value: true
-		});
-
-		var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
-
-		var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
-
-		function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { "default": obj }; }
-
-		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
-
 		var _motionTween = __webpack_require__(4);
 
 		var _motionTween2 = _interopRequireDefault(_motionTween);
 
-		var _DEFAULT_OPTIONS = {
-			loop: false,
-			"in": 0,
-			out: null,
-			duration: null,
-			fillMode: 0
-		};
+		var _timelineState = __webpack_require__(2);
+
+		var _timelineState2 = _interopRequireDefault(_timelineState);
+
+		var _timelineAbstract = __webpack_require__(12);
+
+		var _timelineAbstract2 = _interopRequireDefault(_timelineAbstract);
 
 		var Tween = (function () {
-			_createClass(Tween, null, [{
-				key: "FILL_MODE",
-				value: {
-					NOME: 0,
-					FORWARD: 1,
-					BACKWARD: 2,
-					BOTH: 3
-				},
-				enumerable: true
-			}]);
-
-			function Tween(propertyKeyframes, identifier, options) {
+			function Tween(name) {
 				_classCallCheck(this, Tween);
 
 				this._propertyKeyframesMap = null;
-				this._identifier = null;
 				this._options = null;
+				this._name = null;
+				this._duration = 0;
 
-				this._init(propertyKeyframes, identifier, options);
+				this._init(name);
 			}
 
 			/*________________________________________________________
@@ -8066,44 +8150,59 @@
 		 ________________________________________________________*/
 
 			_createClass(Tween, [{
-				key: "getState",
+				key: 'addKeyframes',
+				value: function addKeyframes(keyframesObject) {
+					this._addKeyframes(keyframesObject);
+				}
+			}, {
+				key: 'getState',
 				value: function getState(time) {
 					return this._getState(time);
 				}
 			}, {
-				key: "_init",
+				key: '_init',
 
 				/*________________________________________________________
 		  	PRIVATE CLASS METHODS
 		  ________________________________________________________*/
 
-				value: function _init(propertyKeyframes, identifier, options) {
-					this._options = _extends({}, _DEFAULT_OPTIONS, options);
+				value: function _init(name) {
 
-					this._identifier = identifier;
+					if (name == null) {
+						throw Error("Name not specified");
+					}
 
-					this._processProperties(propertyKeyframes);
-
-					this._updateDuration();
-				}
-			}, {
-				key: "_processProperties",
-				value: function _processProperties(propertyKeyframes) {
-					var _this = this;
+					this._name = name;
 
 					this._propertyKeyframesMap = new Map();
+				}
+			}, {
+				key: '_addKeyframes',
+				value: function _addKeyframes(keyframesObject) {
+					var _this = this;
 
-					Object.keys(propertyKeyframes).map(function (key, index) {
+					var keyframes = undefined;
 
-						var keyframes = _this._validateKeyframes(propertyKeyframes[key]);
+					Object.keys(keyframesObject).map(function (key, index) {
+
+						keyframes = _this._cloneKeyframes(keyframesObject[key]);
 
 						_this._propertyKeyframesMap.set(key, keyframes);
 					});
-				}
-			}, {
-				key: "_validateKeyframes",
-				value: function _validateKeyframes(keyframes) {
 
+					this._duration = this._getKeyframesDuration();
+				}
+
+				/**
+		   * Method clones the array of keyframes
+		   *
+		   * @private
+		   * @param {Array} keyframes An Array of keyframe objects
+		   * @returns Array
+		   */
+			}, {
+				key: '_cloneKeyframes',
+				value: function _cloneKeyframes(keyframes) {
 					var keyframesCloned = keyframes.map(function (keyframe) {
 						return _extends({}, keyframe);
 					});
@@ -8111,96 +8210,51 @@
 					return keyframesCloned;
 				}
 			}, {
-				key: "_updateDuration",
-				value: function _updateDuration() {
+				key: '_getKeyframesDuration',
+				value: function _getKeyframesDuration() {
 					var duration = 0;
-					var inIndex = -1;
-
+					// the durationdetermined here is relative to the entire tween, yet to be clipped by in and out
 					this._propertyKeyframesMap.forEach(function (keyframes, key) {
 						keyframes.forEach(function (keyframe, index) {
 							duration = Math.max(duration, keyframe.time);
 						});
 					});
 
-					if (this._options["in"] == null) {
-						this._options["in"] = 0;
-					} else {
-						// adjust the duration
-						if (this._options["in"] > this._duration) {
-							throw Error("In point is set beyond the end of the tween!");
-						}
-						duration -= this._options["in"];
-					}
-
-					if (this._options.out != null && this._options.duration != null) {
-						throw Error("specify either and out time or duration, not both!");
-					}
-
-					if (this._options.duration != null) {
-						this._options.out = this._options["in"] + this._options.duration;
-						duration = this._options.duration;
-					}
-
-					if (this._options.out != null) {
-						duration = this._options.out - this._options["in"];
-					} else {
-						this._options.out = this._options["in"] + duration;
-					}
-
-					this._options.duration = duration;
-
-					if (this._options["in"] > this._options.out) {
-						throw Error("tween in is greater than out!");
-					}
+					return duration;
 				}
+
+				/**
+		   * Method calculates and returns the values for each property at the given time
+		   *
+		   * @private
+		   * @param {Number} time Time in milisecond
+		   * @return Object
+		   */
 			}, {
-				key: "_searchForKeyframeByTime",
-				value: function _searchForKeyframeByTime() {}
-			}, {
-				key: "_getState",
+				key: '_getState',
 				value: function _getState(time) {
 					var _this2 = this;
 
-					var propertiesStateObject = {};
-
-					time = this._resolveTime(time);
+					var state = new _timelineState2['default'](_timelineState2['default'].TYPE.TWEEN, this._name);
 
 					this._propertyKeyframesMap.forEach(function (keyframes, property) {
 
-						propertiesStateObject[property] = _this2._getTweenValue(keyframes, time);
+						state.addProperty(property, _this2._getTweenValue(keyframes, time));
 					});
 
-					return propertiesStateObject;
+					return state;
 				}
-			}, {
-				key: "_loopTime",
-				value: function _loopTime(time) {
-					return ((time - this._options["in"]) % this._options.duration + this._options.duration) % this._options.duration;
-				}
-			}, {
-				key: "_resolveTime",
-				value: function _resolveTime(time) {
-					// resolve time
-					if (time < this._options["in"]) {
-						if (this._options.fillMode === Tween.FILL_MODE.BACKWARD || this._options.fillMode === Tween.FILL_MODE.BOTH) {
-							if (this._options.loop) {
-								return this._loopTime(time);
-							}
-						}
-					}
 
-					if (time > this._options.out) {
-						if (this._options.fillMode === Tween.FILL_MODE.FORWARD || this._options.fillMode === Tween.FILL_MODE.BOTH) {
-							if (this._options.loop) {
-								return this._loopTime(time);
-							}
-						}
-					}
-
-					return time;
-				}
+				/**
+		   * Method takes an array of Keyframes and time and returns the tweened value at that time
+		   *
+		   * @private
+		   * @param {Array} keyframes Array of keyframe objects with time and value properties.
+		   * @param {Number} time Time in milisecond
+		   * @return Number
+		   */
 			}, {
-				key: "_getTweenValue",
+				key: '_getTweenValue',
 				value: function _getTweenValue(keyframes, time) {
 					var value = null;
 					// interate over keyframes untill we find the exact value or keyframes either side
@@ -8234,18 +8288,10 @@
 					}
 
 					if (previousKeyframe == null) {
-						if (time < this._options["in"] && this._options.fillMode !== Tween.FILL_MODE.BACKWARD && this._options.fillMode !== Tween.FILL_MODE.BOTH) {
-							return value;
-						}
-
 						return nextKeyframe.value;
 					}
 
 					if (nextKeyframe == null) {
-						if (time > this._options.out && this._options.fillMode !== Tween.FILL_MODE.FORWARD && this._options.fillMode !== Tween.FILL_MODE.BOTH) {
-							return value;
-						}
-
 						return previousKeyframe.value;
 					}
 
@@ -8260,24 +8306,23 @@
 
 					return value;
 				}
+
+				/**
+		  * Method calculates the value between two keyframes
+		  *
+		  * @private
+		  * @param {Object} lastKeyframe left keyframe object
+		  * @param {Object} keyframe right keyframe object
+		  * @param {Number} time Time in milisecond
+		  * @return Number
+		  */
 			}, {
-				key: "_tweenBetweenKeyframes",
+				key: '_tweenBetweenKeyframes',
 				value: function _tweenBetweenKeyframes(lastKeyframe, keyframe, time) {
+					// time difference between keyframes
 					var timeDifference = keyframe.time - lastKeyframe.time;
+					// percentage float 0-1 of time through difference
 					var deltaFloat = (time - lastKeyframe.time) / timeDifference;
-
-					if (keyframe.time < lastKeyframe.time) {
-						// we are looping and needing to use the last keyframe as lastKeyframe
-						timeDifference = this._options.duration - lastKeyframe.time + keyframe.time;
-
-						if (time < lastKeyframe.time) {
-							// time is less that the last keyframe.time and requires the difference
-							// between the last keyframe.time and the duration to be taken into account
-							deltaFloat = (this._options.duration - lastKeyframe.time + time) / timeDifference;
-						} else {
-							deltaFloat = (time - lastKeyframe.time) / timeDifference;
-						}
-					}
 
 					var easedDelta = deltaFloat;
 
@@ -8287,7 +8332,7 @@
 							animatorOptions = _extends({}, animatorOptions, lastKeyframe.animatorOptions);
 						}
 
-						easedDelta = _motionTween2["default"].getValue(lastKeyframe.animatorType, animatorOptions, deltaFloat);
+						easedDelta = _motionTween2['default'].getValue(lastKeyframe.animatorType, animatorOptions, deltaFloat);
 					}
 
 					var valueDifference = keyframe.value - lastKeyframe.value;
@@ -8296,47 +8341,22 @@
 					return tweenedValue;
 				}
 			}, {
-				key: "propertyKeyframesMap",
+				key: 'duration',
 				get: function get() {
-					return this._propertyKeyframesMap;
+					return this._duration;
 				}
 			}, {
-				key: "identifier",
+				key: 'name',
 				get: function get() {
-					return this._identifier;
-				}
-			}, {
-				key: "duration",
-				get: function get() {
-					return this._options.duration;
-				}
-			}, {
-				key: "in",
-				get: function get() {
-					return this._options["in"];
-				}
-			}, {
-				key: "out",
-				get: function get() {
-					return this._options.out;
-				}
-			}, {
-				key: "loop",
-				get: function get() {
-					return this._options.loop;
-				}
-			}, {
-				key: "fillMode",
-				get: function get() {
-					return this._options.fillMode;
+					return this._name;
 				}
 			}]);
 
 			return Tween;
 		})();
 
-		exports["default"] = Tween;
-		module.exports = exports["default"];
+		exports['default'] = Tween;
+		module.exports = exports['default'];
 
 	/***/ },
 	/* 4 */
@@ -9269,6 +9289,354 @@
 
 		exports["default"] = SpringRK4;
 		module.exports = exports["default"];
+
+	/***/ },
+	/* 12 */
+	/***/ function(module, exports) {
+
+		"use strict";
+
+		Object.defineProperty(exports, "__esModule", {
+			value: true
+		});
+
+		var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
+
+		var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
+
+		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+
+		var _DEFAULT_OPTIONS = {
+			loop: false,
+			"in": 0,
+			out: null,
+			fillMode: 0
+		};
+
+		var TimelineAbstract = (function () {
+			_createClass(TimelineAbstract, null, [{
+				key: "FILL_MODE",
+				value: {
+					NOME: 0,
+					FORWARD: 1,
+					BACKWARD: 2,
+					BOTH: 3
+				},
+				enumerable: true
+			}]);
+
+			function TimelineAbstract(name, options) {
+				_classCallCheck(this, TimelineAbstract);
+
+				this._options = null;
+				this._name = null;
+
+				this._init(name, options);
+			}
+
+			/*________________________________________________________
+		 	PUBLIC CLASS METHODS
+		 ________________________________________________________*/
+
+			_createClass(TimelineAbstract, [{
+				key: "getState",
+				value: function getState(time) {
+					return this._getState(time);
+				}
+			}, {
+				key: "_init",
+
+				/*________________________________________________________
+		  	PRIVATE CLASS METHODS
+		  ________________________________________________________*/
+
+				value: function _init(name, options) {
+
+					this._validateOptions(options);
+
+					this._options = _extends({}, _DEFAULT_OPTIONS, options);
+
+					this._name = name;
+				}
+			}, {
+				key: "_validateOptions",
+				value: function _validateOptions(options) {}
+			}, {
+				key: "_getState",
+				value: function _getState(time) {}
+
+				/**
+		   * Method iterates through keyframes for each property and determines our relative duration between in and out
+		   *
+		   * @private
+		   */
+			}, {
+				key: "_updateRelativeDuration",
+				value: function _updateRelativeDuration(absoluteDuration) {
+					var inIndex = -1;
+					var duration = absoluteDuration;
+
+					if (this._options["in"] == null) {
+						this._options["in"] = 0;
+					} else {
+						// adjust the duration
+						if (this._options["in"] > duration) {
+							throw Error("In point is set beyond the end of the tween!");
+						}
+						duration -= this._options["in"];
+					}
+
+					if (this._options.out != null) {
+						duration = this._options.out - this._options["in"];
+					} else {
+						this._options.out = this._options["in"] + duration;
+					}
+
+					this._duration = duration;
+
+					if (this._options["in"] > this._options.out) {
+						throw Error("tween in is greater than out!");
+					}
+				}
+
+				/**
+		   * Method takes any time and wraps it accordingly to be within in and out points
+		   *
+		   * @private
+		   * @param {Number} time Time in milisecond
+		   * @return Number
+		   */
+			}, {
+				key: "_loopTime",
+				value: function _loopTime(time) {
+					return ((time - this._options["in"]) % this._duration + this._duration) % this._duration;
+				}
+
+				/**
+		   * Method takes any time and checks whether the time value requires wrapping, if so then returns wrapped time
+		   *
+		   * @private
+		   * @param {Number} time Time in milisecond
+		   * @return Number
+		   */
+			}, {
+				key: "_resolveTime",
+				value: function _resolveTime(time) {
+					if (time < this._options["in"]) {
+						if (this._options.fillMode === TimelineAbstract.FILL_MODE.BACKWARD || this._options.fillMode === TimelineAbstract.FILL_MODE.BOTH) {
+							if (this._options.loop) {
+								return this._loopTime(time);
+							}
+						}
+					}
+
+					if (time > this._options.out) {
+						if (this._options.fillMode === TimelineAbstract.FILL_MODE.FORWARD || this._options.fillMode === TimelineAbstract.FILL_MODE.BOTH) {
+							if (this._options.loop) {
+								return this._loopTime(time);
+							}
+						}
+					}
+
+					return time;
+				}
+			}, {
+				key: "duration",
+				get: function get() {
+					return this._duration;
+				}
+			}, {
+				key: "name",
+				get: function get() {
+					return this._name;
+				}
+			}, {
+				key: "in",
+				get: function get() {
+					return this._options["in"];
+				}
+			}, {
+				key: "out",
+				get: function get() {
+					return this._options.out;
+				}
+			}, {
+				key: "loop",
+				get: function get() {
+					return this._options.loop;
+				}
+			}, {
+				key: "fillMode",
+				get: function get() {
+					return this._options.fillMode;
+				}
+			}]);
+
+			return TimelineAbstract;
+		})();
+
+		exports["default"] = TimelineAbstract;
+		module.exports = exports["default"];
+
+	/***/ },
+	/* 13 */
+	/***/ function(module, exports, __webpack_require__) {
+
+		'use strict';
+
+		Object.defineProperty(exports, '__esModule', {
+			value: true
+		});
+
+		var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ('value' in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
+
+		var _get = function get(_x, _x2, _x3) { var _again = true; _function: while (_again) { var object = _x, property = _x2, receiver = _x3; _again = false; if (object === null) object = Function.prototype; var desc = Object.getOwnPropertyDescriptor(object, property); if (desc === undefined) { var parent = Object.getPrototypeOf(object); if (parent === null) { return undefined; } else { _x = parent; _x2 = property; _x3 = receiver; _again = true; desc = parent = undefined; continue _function; } } else if ('value' in desc) { return desc.value; } else { var getter = desc.get; if (getter === undefined) { return undefined; } return getter.call(receiver); } } };
+
+		function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { 'default': obj }; }
+
+		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError('Cannot call a class as a function'); } }
+
+		function _inherits(subClass, superClass) { if (typeof superClass !== 'function' && superClass !== null) { throw new TypeError('Super expression must either be null or a function, not ' + typeof superClass); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } }); if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass; }
+
+		var _timeline = __webpack_require__(1);
+
+		var _timeline2 = _interopRequireDefault(_timeline);
+
+		var InteractiveTimeline = (function (_Timeline) {
+			_inherits(InteractiveTimeline, _Timeline);
+
+			function InteractiveTimeline(name, options) {
+				_classCallCheck(this, InteractiveTimeline);
+
+				_get(Object.getPrototypeOf(InteractiveTimeline.prototype), 'constructor', this).call(this, name, options);
+				this._sequences = [];
+			}
+
+			/*________________________________________________________
+		 	PUBLIC CLASS METHODS
+		 ________________________________________________________*/
+
+			_createClass(InteractiveTimeline, [{
+				key: 'increment',
+				value: function increment(timeDelta) {
+					return this._increment(timeDelta);
+				}
+			}, {
+				key: 'setSequences',
+				value: function setSequences(sequences) {
+					this._setSequences(sequences);
+				}
+			}, {
+				key: 'getSequences',
+				value: function getSequences() {
+					return this._sequences;
+				}
+
+				/*________________________________________________________
+		  	PRIVATE CLASS METHODS
+		  ________________________________________________________*/
+
+			}, {
+				key: '_increment',
+				value: function _increment(timeDelta) {
+					var outDelta = undefined,
+					    sequenceOutTime = undefined;
+
+					// get current sequence
+					var currentSequence = this._getSequenceByTime(this._currentTime);
+
+					this._currentTime += timeDelta;
+
+					// get updated sequence with current time
+					var prospectiveSequence = this._getSequenceByTime(this._currentTime);
+
+					// using sequences currently only works travelling forwards
+					if (timeDelta > 0) {
+						// we only start to think about redirect if last time was within a sequence
+						if (currentSequence != null) {
+							// check to see we have left the current sequence and that the current sequence has a next location
+							if (currentSequence !== prospectiveSequence && currentSequence.next != null) {
+
+								// if there is a prospective then check that its not the next of current
+								if (prospectiveSequence != null) {
+
+									if (currentSequence.next !== prospectiveSequence.label) {
+										// if duration is set on current the outDelta should be from after the duration
+										if (currentSequence.duration) {
+											sequenceOutTime = currentSequence.time + currentSequence.duration;
+										} else {
+											// otherwise no duration set the current sequence extends to the begining of the prospective
+											sequenceOutTime = prospectiveSequence.time;
+										}
+									} else {
+										sequenceOutTime = prospectiveSequence.time;
+									}
+								} else {
+									// if prospective is null and current is not, then a duration must be set, so use that
+
+									sequenceOutTime = currentSequence.time + currentSequence.duration;
+								}
+								// this makes the assumption we have travelled forward and have moved out of the current sequence to the right,
+								// if we have move out of the sequence to the left therefore backwards the outDelta is from the end of the
+								// sequence
+								outDelta = this._currentTime - sequenceOutTime;
+								// adjust time and update current
+								prospectiveSequence = this._getSequenceByLabel(currentSequence.next);
+
+								this.currentTime = prospectiveSequence.time + outDelta;
+							}
+						}
+					}
+
+					return this._getState(this._currentTime);
+				}
+			}, {
+				key: '_setSequences',
+				value: function _setSequences(sequences) {
+					// merge sequence
+					// validate check for overlaping
+					this._sequences = sequences;
+				}
+			}, {
+				key: '_getSequenceByTime',
+				value: function _getSequenceByTime(time) {
+					var sequence = undefined;
+
+					for (var i = 0; i < this._sequences.length; i++) {
+						if (this._sequences[i].time > time) {
+							break;
+						}
+						sequence = this._sequences[i];
+					}
+
+					if (sequence) {
+						// check if time is beyond last sequence
+						if (sequence.duration && time > sequence.time + sequence.duration) {
+							return null;
+						}
+						// return the current sequence
+						return sequence;
+					}
+
+					// no relevent sequences
+					return null;
+				}
+			}, {
+				key: '_getSequenceByLabel',
+				value: function _getSequenceByLabel(label) {
+					for (var i = 0; i < this._sequences.length; i++) {
+						if (this._sequences[i].label === label) {
+							return this._sequences[i];
+						}
+					}
+				}
+			}]);
+
+			return InteractiveTimeline;
+		})(_timeline2['default']);
+
+		exports['default'] = InteractiveTimeline;
+		module.exports = exports['default'];
 
 	/***/ }
 	/******/ ])
@@ -38661,6 +39029,8 @@
 
 									sheetIndex += 1;
 								}
+
+								// const tween = new Tween(propertyKeyframes, `frames`, { loop: false, fillMode: 0 });
 							} catch (err) {
 								_didIteratorError = true;
 								_iteratorError = err;
@@ -38676,10 +39046,11 @@
 								}
 							}
 
-							var tween = new _timeline.Tween(propertyKeyframes, "frames", { loop: false, fillMode: 0 });
+							var tween = new _timeline.Tween("frames");
+							tween.addKeyframes(propertyKeyframes);
 
-							this._sheetTimeline = new _timeline.InteractiveTimeline();
-							this._sheetTimeline.addTween(tween, 0);
+							this._sheetTimeline = new _timeline.InteractiveTimeline("sprite-sheet-timeline");
+							this._sheetTimeline.addChild(tween, { loop: false, fillMode: "none" });
 
 							var sequences = this._options.timeline.getSequences();
 							if (sequences.length > 0) {
@@ -39013,7 +39384,7 @@
 
 							var _timeline2 = _interopRequireDefault(_timeline);
 
-							var _interactiveTimeline = __webpack_require__(2);
+							var _interactiveTimeline = __webpack_require__(13);
 
 							var _interactiveTimeline2 = _interopRequireDefault(_interactiveTimeline);
 
@@ -39033,11 +39404,11 @@
 							/***/
 						},
 						/* 1 */
-						function (module, exports) {
+						function (module, exports, __webpack_require__) {
 
-							"use strict";
+							'use strict';
 
-							Object.defineProperty(exports, "__esModule", {
+							Object.defineProperty(exports, '__esModule', {
 								value: true
 							});
 
@@ -39050,172 +39421,6 @@
 									}
 								}return target;
 							};
-
-							var _createClass = (function () {
-								function defineProperties(target, props) {
-									for (var i = 0; i < props.length; i++) {
-										var descriptor = props[i];descriptor.enumerable = descriptor.enumerable || false;descriptor.configurable = true;if ("value" in descriptor) descriptor.writable = true;Object.defineProperty(target, descriptor.key, descriptor);
-									}
-								}return function (Constructor, protoProps, staticProps) {
-									if (protoProps) defineProperties(Constructor.prototype, protoProps);if (staticProps) defineProperties(Constructor, staticProps);return Constructor;
-								};
-							})();
-
-							function _classCallCheck(instance, Constructor) {
-								if (!(instance instanceof Constructor)) {
-									throw new TypeError("Cannot call a class as a function");
-								}
-							}
-
-							var TIMELINE_DEFAULT_OPTIONS = {
-								loop: false,
-								fps: 60
-							};
-
-							var Timeline = (function () {
-								function Timeline(options) {
-									_classCallCheck(this, Timeline);
-
-									this._currentTime = 0;
-									this._loop = null;
-									this._options = null;
-									this._duration = null;
-									this._tweens = [];
-
-									this._init(options);
-								}
-
-								/*________________________________________________________
-	       	PUBLIC CLASS METHODS
-	       ________________________________________________________*/
-
-								_createClass(Timeline, [{
-									key: Symbol.iterator,
-									value: function value() {
-										return this;
-									}
-								}, {
-									key: "next",
-									value: function next() {
-										return this._next();
-									}
-								}, {
-									key: "addTween",
-									value: function addTween(tween, time) {
-										this._addTween(tween, time);
-									}
-								}, {
-									key: "getState",
-									value: function getState(time) {
-										return this._getState(time);
-									}
-								}, {
-									key: "_init",
-
-									/*________________________________________________________
-	        	PRIVATE CLASS METHODS
-	        ________________________________________________________*/
-
-									value: function _init(options) {
-										this._options = _extends({}, TIMELINE_DEFAULT_OPTIONS, options);
-									}
-								}, {
-									key: "_addTween",
-									value: function _addTween(tween) {
-										var time = arguments.length <= 1 || arguments[1] === undefined ? 0 : arguments[1];
-
-										if (this._tweens.length === 0 || this._tweens.find(function (tweenObjectData) {
-											return tweenObjectData.tween === tween;
-										}) === false) {
-											this._tweens.push({
-												tween: tween,
-												time: time
-											});
-											this._updateDuration();
-										}
-									}
-								}, {
-									key: "_updateDuration",
-									value: function _updateDuration() {
-										var _this = this;
-
-										this._duration = 0;
-										this._tweens.forEach(function (tweenObjectData, index) {
-											_this._duration = Math.max(_this._duration, tweenObjectData.time + tweenObjectData.tween.duration);
-										});
-									}
-								}, {
-									key: "_getState",
-									value: function _getState(time) {
-										var stateMap = new Map();
-										// iterate over map properies
-										this._tweens.forEach(function (tweenObjectData, index) {
-											// interate over object properties
-											stateMap.set(tweenObjectData.tween.identifier, tweenObjectData.tween.getState(time - tweenObjectData.time));
-										});
-										// return map
-										return stateMap;
-									}
-								}, {
-									key: "_next",
-									value: function _next() {
-										var time = this._currentTime;
-
-										this._currentTime += 1000 / this._options.fps;
-
-										var done = time >= this._duration;
-
-										if (done) {
-											this._currentTime = 0;
-											return { done: done };
-										} else {
-											return {
-												value: this._getState(time)
-											};
-										}
-									}
-								}, {
-									key: "duration",
-									set: function set(duration) {
-										this._duration = this._options.duration = duration;
-									},
-									get: function get() {
-										return this._duration;
-									}
-								}, {
-									key: "loop",
-									set: function set(boolean) {
-										this._loop = boolean;
-									},
-									get: function get() {
-										return this._loop;
-									}
-								}, {
-									key: "currentTime",
-									set: function set(time) {
-										this._currentTime = time;
-									},
-									get: function get() {
-										return this._currentTime;
-									}
-								}]);
-
-								return Timeline;
-							})();
-
-							exports["default"] = Timeline;
-							module.exports = exports["default"];
-
-							/***/
-						},
-						/* 2 */
-						function (module, exports, __webpack_require__) {
-
-							'use strict';
-
-							Object.defineProperty(exports, '__esModule', {
-								value: true
-							});
 
 							var _createClass = (function () {
 								function defineProperties(target, props) {
@@ -39263,148 +39468,339 @@
 								}subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } });if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass;
 							}
 
-							var _timeline = __webpack_require__(1);
+							var _timelineState = __webpack_require__(2);
 
-							var _timeline2 = _interopRequireDefault(_timeline);
+							var _timelineState2 = _interopRequireDefault(_timelineState);
 
-							var InteractiveTimeline = (function (_Timeline) {
-								_inherits(InteractiveTimeline, _Timeline);
+							var _tween = __webpack_require__(3);
 
-								function InteractiveTimeline(options) {
-									_classCallCheck(this, InteractiveTimeline);
+							var _tween2 = _interopRequireDefault(_tween);
 
-									_get(Object.getPrototypeOf(InteractiveTimeline.prototype), 'constructor', this).call(this, options);
-									this._sequences = [];
+							var _TIMELINE_DEFAULT_OPTIONS = {
+								fps: 60
+							};
+
+							var _CHILD_DEFAULT_OPTIONS = {
+								fillMode: "both",
+								'in': 0,
+								loop: false,
+								out: null,
+								time: 0
+							};
+
+							var Timeline = (function (_Tween) {
+								_inherits(Timeline, _Tween);
+
+								_createClass(Timeline, null, [{
+									key: 'FILL_MODE',
+									value: {
+										NOME: "none",
+										FORWARD: "forward",
+										BACKWARD: "backward",
+										BOTH: "both"
+									},
+									enumerable: true
+								}]);
+
+								function Timeline(name, options) {
+									_classCallCheck(this, Timeline);
+
+									_get(Object.getPrototypeOf(Timeline.prototype), 'constructor', this).call(this, name);
+									this._children = [];
+									this._currentTime = 0;
 								}
 
 								/*________________________________________________________
 	       	PUBLIC CLASS METHODS
 	       ________________________________________________________*/
 
-								_createClass(InteractiveTimeline, [{
-									key: 'increment',
-									value: function increment(timeDelta) {
-										return this._increment(timeDelta);
+								_createClass(Timeline, [{
+									key: Symbol.iterator,
+									value: function value() {
+										return this;
 									}
 								}, {
-									key: 'setSequences',
-									value: function setSequences(sequences) {
-										this._setSequences(sequences);
+									key: 'next',
+									value: function next() {
+										return this._next();
 									}
 								}, {
-									key: 'getSequences',
-									value: function getSequences() {
-										return this._sequences;
+									key: 'addChild',
+									value: function addChild(child, options) {
+										this._addChild(child, options);
 									}
+								}, {
+									key: '_init',
 
 									/*________________________________________________________
 	        	PRIVATE CLASS METHODS
 	        ________________________________________________________*/
 
+									value: function _init(name, options) {
+										_get(Object.getPrototypeOf(Timeline.prototype), '_init', this).call(this, name);
+
+										this._options = _extends({}, _TIMELINE_DEFAULT_OPTIONS, options);
+									}
 								}, {
-									key: '_increment',
-									value: function _increment(timeDelta) {
-										var outDelta = undefined,
-										    sequenceOutTime = undefined;
+									key: '_addChild',
+									value: function _addChild(child, options) {
+										// clone options into settings property
+										var o = {
+											child: child,
+											settings: _extends({}, _CHILD_DEFAULT_OPTIONS, options)
+										};
 
-										// get current sequence
-										var currentSequence = this._getSequenceByTime(this._currentTime);
+										// set out property if not already set
+										if (o.settings.out == null) {
+											o.settings.out = o.settings.time + child.duration;
+										}
 
-										this._currentTime += timeDelta;
+										this._children.push(o);
 
-										// get updated sequence with current time
-										var prospectiveSequence = this._getSequenceByTime(this._currentTime);
+										var absoluteDuration = this._getChildrenDuration();
 
-										// we only redirect if last time was within a sequence
-										if (currentSequence != null) {
-											// check to see we have left the current sequence and that the current sequence has a next location
-											if (currentSequence !== prospectiveSequence && currentSequence.next != null) {
+										this._duration = absoluteDuration;
+									}
+								}, {
+									key: '_removeChild',
+									value: function _removeChild() {}
+								}, {
+									key: '_getChildrenDuration',
+									value: function _getChildrenDuration() {
+										var duration = 0;
 
-												// if there is a prospective then check that its not the next of current
-												if (prospectiveSequence != null) {
+										this._children.forEach(function (childObjectData, index) {
 
-													if (currentSequence.next !== prospectiveSequence.label) {
-														// if duration is set on current the outDelta should be from after the duration
-														if (currentSequence.duration) {
-															sequenceOutTime = currentSequence.time + currentSequence.duration;
-														} else {
-															// otherwise no duration set the current sequence extends to the begining of the prospective
-															sequenceOutTime = prospectiveSequence.time;
-														}
-													} else {
-														sequenceOutTime = prospectiveSequence.time;
-													}
+											duration = Math.max(duration, childObjectData.settings.out);
+										});
+
+										return duration;
+									}
+								}, {
+									key: '_getState',
+									value: function _getState(time) {
+										var _this = this;
+
+										var state = new _timelineState2['default'](_timelineState2['default'].TYPE.TIMELINE, this._name);
+										var tweenState = undefined;
+
+										var resolvedTime = undefined;
+
+										this._children.forEach(function (childObjectData, index) {
+
+											// loop is accounted for here, fill is automatically built into tween
+											resolvedTime = _this._resolveChildRelativeTime(time, childObjectData.settings);
+
+											tweenState = childObjectData.child.getState(resolvedTime);
+
+											state.addChild(tweenState);
+										});
+
+										return state;
+									}
+
+									/**
+	         * Method takes any time and wraps it accordingly to be within in and out points
+	         *
+	         * @private
+	         * @param {Number} time Time in milisecond
+	         * @return Number
+	         */
+								}, {
+									key: '_loopTime',
+									value: function _loopTime(time, childSettings) {
+										var childEditDuration = childSettings.out - childSettings['in'];
+										var realativeTime = time - childSettings['in'];
+										var loopedTime = (realativeTime % childEditDuration + childEditDuration) % childEditDuration;
+										return childSettings['in'] + loopedTime;
+									}
+
+									/**
+	         * Method takes any time and checks whether the time value requires wrapping, if so then returns wrapped time
+	         *
+	         * @private
+	         * @param {Number} time Time in milisecond
+	         * @return Number
+	         */
+								}, {
+									key: '_resolveChildRelativeTime',
+									value: function _resolveChildRelativeTime(time, childSettings) {
+										// now we have the beginning position of the child we can determine the time relative to the child
+										var childRelativeTime = time - childSettings.time;
+
+										if (time < childSettings['in']) {
+											if (childSettings.fillMode === Timeline.FILL_MODE.BACKWARD || childSettings.fillMode === Timeline.FILL_MODE.BOTH) {
+
+												if (childSettings.loop) {
+													return this._loopTime(time, childSettings) - childSettings.time;
 												} else {
-													// if prospective is null and current is not, then a duration must be set, so use that
-													sequenceOutTime = currentSequence.time + currentSequence.duration;
+													return childSettings['in'] - childSettings.time;
 												}
-
-												outDelta = this._currentTime - sequenceOutTime;
-												// adjust time and update current
-												prospectiveSequence = this._getSequenceByLabel(currentSequence.next);
-
-												this.currentTime = prospectiveSequence.time + outDelta;
+											} else {
+												return undefined;
 											}
 										}
 
-										return this._getState(this._currentTime);
+										if (time > childSettings.out) {
+											if (childSettings.fillMode === Timeline.FILL_MODE.FORWARD || childSettings.fillMode === Timeline.FILL_MODE.BOTH) {
+												if (childSettings.loop) {
+													return this._loopTime(time, childSettings) - childSettings.time;
+												} else {
+													return childSettings.out - childSettings.time;
+												}
+											} else {
+												return undefined;
+											}
+										}
+
+										return childRelativeTime;
 									}
 								}, {
-									key: '_setSequences',
-									value: function _setSequences(sequences) {
-										// merge sequence
-										// validate check for overlaping
-										this._sequences = sequences;
+									key: '_next',
+									value: function _next() {
+										var time = this._currentTime;
+
+										this._currentTime += 1000 / this._options.fps;
+
+										var done = time >= this._duration;
+
+										if (done) {
+											this._currentTime = 0;
+											return { done: done };
+										} else {
+											return {
+												value: this._getState(time)
+											};
+										}
 									}
 								}, {
-									key: '_getSequenceByTime',
-									value: function _getSequenceByTime(time) {
-										var sequence = undefined;
-
-										for (var i = 0; i < this._sequences.length; i++) {
-											if (this._sequences[i].time > time) {
-												break;
-											}
-											sequence = this._sequences[i];
-										}
-
-										if (sequence) {
-											// check if time is beyond last sequence
-											if (sequence.duration && time > sequence.time + sequence.duration) {
-												return null;
-											}
-											// return the current sequence
-											return sequence;
-										}
-
-										// no relevent sequences
-										return null;
+									key: 'currentTime',
+									set: function set(time) {
+										this._currentTime = time;
+									},
+									get: function get() {
+										return this._currentTime;
 									}
 								}, {
-									key: '_getSequenceByLabel',
-									value: function _getSequenceByLabel(label) {
-										for (var i = 0; i < this._sequences.length; i++) {
-											if (this._sequences[i].label === label) {
-												return this._sequences[i];
-											}
-										}
+									key: 'duration',
+									get: function get() {
+										return this._duration;
 									}
 								}]);
 
-								return InteractiveTimeline;
-							})(_timeline2['default']);
+								return Timeline;
+							})(_tween2['default']);
 
-							exports['default'] = InteractiveTimeline;
+							exports['default'] = Timeline;
 							module.exports = exports['default'];
+
+							/***/
+						},
+						/* 2 */
+						function (module, exports) {
+
+							"use strict";
+
+							Object.defineProperty(exports, "__esModule", {
+								value: true
+							});
+
+							var _createClass = (function () {
+								function defineProperties(target, props) {
+									for (var i = 0; i < props.length; i++) {
+										var descriptor = props[i];descriptor.enumerable = descriptor.enumerable || false;descriptor.configurable = true;if ("value" in descriptor) descriptor.writable = true;Object.defineProperty(target, descriptor.key, descriptor);
+									}
+								}return function (Constructor, protoProps, staticProps) {
+									if (protoProps) defineProperties(Constructor.prototype, protoProps);if (staticProps) defineProperties(Constructor, staticProps);return Constructor;
+								};
+							})();
+
+							function _classCallCheck(instance, Constructor) {
+								if (!(instance instanceof Constructor)) {
+									throw new TypeError("Cannot call a class as a function");
+								}
+							}
+
+							var TimelineState = (function () {
+								_createClass(TimelineState, null, [{
+									key: "TYPE",
+									value: {
+										TWEEN: "tween",
+										TIMELINE: "timeline"
+									},
+									enumerable: true
+								}]);
+
+								function TimelineState(type, name) {
+									_classCallCheck(this, TimelineState);
+
+									this._type = TimelineState.TYPE.TWEEN;
+									this._children = null;
+									this._properties = null;
+									this._name = null;
+
+									this._type = type;
+									this._name = name;
+
+									this._properties = {};
+
+									if (this._type == TimelineState.TYPE.TIMELINE) {
+										this._children = [];
+									}
+								}
+
+								_createClass(TimelineState, [{
+									key: "addProperty",
+									value: function addProperty(key, value) {
+										this._properties[key] = value;
+									}
+								}, {
+									key: "addChild",
+									value: function addChild(timelineStateInstance) {
+										this._children.push(timelineStateInstance);
+									}
+								}, {
+									key: "type",
+									get: function get() {
+										return this._type;
+									}
+								}, {
+									key: "name",
+									get: function get() {
+										return this._name;
+									}
+								}, {
+									key: "children",
+									get: function get() {
+										// if (this._type !== TimelineState.TYPE.TIMELINE) {
+										// 	throw Error("TimelineState instance is not of type Timeline and there does not have children!");
+										// }
+										return this._children;
+									}
+								}, {
+									key: "properties",
+									get: function get() {
+										// if (this._type !== TimelineState.TYPE.TWEEN) {
+										// 	throw Error("TimelineState instance is not of type Tween and there does not have properties!");
+										// }
+										return this._properties;
+									}
+								}]);
+
+								return TimelineState;
+							})();
+
+							exports["default"] = TimelineState;
+							module.exports = exports["default"];
 
 							/***/
 						},
 						/* 3 */
 						function (module, exports, __webpack_require__) {
 
-							"use strict";
+							'use strict';
 
-							Object.defineProperty(exports, "__esModule", {
+							Object.defineProperty(exports, '__esModule', {
 								value: true
 							});
 
@@ -39421,7 +39817,7 @@
 							var _createClass = (function () {
 								function defineProperties(target, props) {
 									for (var i = 0; i < props.length; i++) {
-										var descriptor = props[i];descriptor.enumerable = descriptor.enumerable || false;descriptor.configurable = true;if ("value" in descriptor) descriptor.writable = true;Object.defineProperty(target, descriptor.key, descriptor);
+										var descriptor = props[i];descriptor.enumerable = descriptor.enumerable || false;descriptor.configurable = true;if ('value' in descriptor) descriptor.writable = true;Object.defineProperty(target, descriptor.key, descriptor);
 									}
 								}return function (Constructor, protoProps, staticProps) {
 									if (protoProps) defineProperties(Constructor.prototype, protoProps);if (staticProps) defineProperties(Constructor, staticProps);return Constructor;
@@ -39429,12 +39825,12 @@
 							})();
 
 							function _interopRequireDefault(obj) {
-								return obj && obj.__esModule ? obj : { "default": obj };
+								return obj && obj.__esModule ? obj : { 'default': obj };
 							}
 
 							function _classCallCheck(instance, Constructor) {
 								if (!(instance instanceof Constructor)) {
-									throw new TypeError("Cannot call a class as a function");
+									throw new TypeError('Cannot call a class as a function');
 								}
 							}
 
@@ -39442,34 +39838,24 @@
 
 							var _motionTween2 = _interopRequireDefault(_motionTween);
 
-							var _DEFAULT_OPTIONS = {
-								loop: false,
-								"in": 0,
-								out: null,
-								duration: null,
-								fillMode: 0
-							};
+							var _timelineState = __webpack_require__(2);
+
+							var _timelineState2 = _interopRequireDefault(_timelineState);
+
+							var _timelineAbstract = __webpack_require__(12);
+
+							var _timelineAbstract2 = _interopRequireDefault(_timelineAbstract);
 
 							var Tween = (function () {
-								_createClass(Tween, null, [{
-									key: "FILL_MODE",
-									value: {
-										NOME: 0,
-										FORWARD: 1,
-										BACKWARD: 2,
-										BOTH: 3
-									},
-									enumerable: true
-								}]);
-
-								function Tween(propertyKeyframes, identifier, options) {
+								function Tween(name) {
 									_classCallCheck(this, Tween);
 
 									this._propertyKeyframesMap = null;
-									this._identifier = null;
 									this._options = null;
+									this._name = null;
+									this._duration = 0;
 
-									this._init(propertyKeyframes, identifier, options);
+									this._init(name);
 								}
 
 								/*________________________________________________________
@@ -39477,44 +39863,59 @@
 	       ________________________________________________________*/
 
 								_createClass(Tween, [{
-									key: "getState",
+									key: 'addKeyframes',
+									value: function addKeyframes(keyframesObject) {
+										this._addKeyframes(keyframesObject);
+									}
+								}, {
+									key: 'getState',
 									value: function getState(time) {
 										return this._getState(time);
 									}
 								}, {
-									key: "_init",
+									key: '_init',
 
 									/*________________________________________________________
 	        	PRIVATE CLASS METHODS
 	        ________________________________________________________*/
 
-									value: function _init(propertyKeyframes, identifier, options) {
-										this._options = _extends({}, _DEFAULT_OPTIONS, options);
+									value: function _init(name) {
 
-										this._identifier = identifier;
+										if (name == null) {
+											throw Error("Name not specified");
+										}
 
-										this._processProperties(propertyKeyframes);
-
-										this._updateDuration();
-									}
-								}, {
-									key: "_processProperties",
-									value: function _processProperties(propertyKeyframes) {
-										var _this = this;
+										this._name = name;
 
 										this._propertyKeyframesMap = new Map();
+									}
+								}, {
+									key: '_addKeyframes',
+									value: function _addKeyframes(keyframesObject) {
+										var _this = this;
 
-										Object.keys(propertyKeyframes).map(function (key, index) {
+										var keyframes = undefined;
 
-											var keyframes = _this._validateKeyframes(propertyKeyframes[key]);
+										Object.keys(keyframesObject).map(function (key, index) {
+
+											keyframes = _this._cloneKeyframes(keyframesObject[key]);
 
 											_this._propertyKeyframesMap.set(key, keyframes);
 										});
-									}
-								}, {
-									key: "_validateKeyframes",
-									value: function _validateKeyframes(keyframes) {
 
+										this._duration = this._getKeyframesDuration();
+									}
+
+									/**
+	         * Method clones the array of keyframes
+	         *
+	         * @private
+	         * @param {Array} keyframes An Array of keyframe objects
+	         * @returns Array
+	         */
+								}, {
+									key: '_cloneKeyframes',
+									value: function _cloneKeyframes(keyframes) {
 										var keyframesCloned = keyframes.map(function (keyframe) {
 											return _extends({}, keyframe);
 										});
@@ -39522,96 +39923,51 @@
 										return keyframesCloned;
 									}
 								}, {
-									key: "_updateDuration",
-									value: function _updateDuration() {
+									key: '_getKeyframesDuration',
+									value: function _getKeyframesDuration() {
 										var duration = 0;
-										var inIndex = -1;
-
+										// the durationdetermined here is relative to the entire tween, yet to be clipped by in and out
 										this._propertyKeyframesMap.forEach(function (keyframes, key) {
 											keyframes.forEach(function (keyframe, index) {
 												duration = Math.max(duration, keyframe.time);
 											});
 										});
 
-										if (this._options["in"] == null) {
-											this._options["in"] = 0;
-										} else {
-											// adjust the duration
-											if (this._options["in"] > this._duration) {
-												throw Error("In point is set beyond the end of the tween!");
-											}
-											duration -= this._options["in"];
-										}
-
-										if (this._options.out != null && this._options.duration != null) {
-											throw Error("specify either and out time or duration, not both!");
-										}
-
-										if (this._options.duration != null) {
-											this._options.out = this._options["in"] + this._options.duration;
-											duration = this._options.duration;
-										}
-
-										if (this._options.out != null) {
-											duration = this._options.out - this._options["in"];
-										} else {
-											this._options.out = this._options["in"] + duration;
-										}
-
-										this._options.duration = duration;
-
-										if (this._options["in"] > this._options.out) {
-											throw Error("tween in is greater than out!");
-										}
+										return duration;
 									}
+
+									/**
+	         * Method calculates and returns the values for each property at the given time
+	         *
+	         * @private
+	         * @param {Number} time Time in milisecond
+	         * @return Object
+	         */
 								}, {
-									key: "_searchForKeyframeByTime",
-									value: function _searchForKeyframeByTime() {}
-								}, {
-									key: "_getState",
+									key: '_getState',
 									value: function _getState(time) {
 										var _this2 = this;
 
-										var propertiesStateObject = {};
-
-										time = this._resolveTime(time);
+										var state = new _timelineState2['default'](_timelineState2['default'].TYPE.TWEEN, this._name);
 
 										this._propertyKeyframesMap.forEach(function (keyframes, property) {
 
-											propertiesStateObject[property] = _this2._getTweenValue(keyframes, time);
+											state.addProperty(property, _this2._getTweenValue(keyframes, time));
 										});
 
-										return propertiesStateObject;
+										return state;
 									}
-								}, {
-									key: "_loopTime",
-									value: function _loopTime(time) {
-										return ((time - this._options["in"]) % this._options.duration + this._options.duration) % this._options.duration;
-									}
-								}, {
-									key: "_resolveTime",
-									value: function _resolveTime(time) {
-										// resolve time
-										if (time < this._options["in"]) {
-											if (this._options.fillMode === Tween.FILL_MODE.BACKWARD || this._options.fillMode === Tween.FILL_MODE.BOTH) {
-												if (this._options.loop) {
-													return this._loopTime(time);
-												}
-											}
-										}
 
-										if (time > this._options.out) {
-											if (this._options.fillMode === Tween.FILL_MODE.FORWARD || this._options.fillMode === Tween.FILL_MODE.BOTH) {
-												if (this._options.loop) {
-													return this._loopTime(time);
-												}
-											}
-										}
-
-										return time;
-									}
+									/**
+	         * Method takes an array of Keyframes and time and returns the tweened value at that time
+	         *
+	         * @private
+	         * @param {Array} keyframes Array of keyframe objects with time and value properties.
+	         * @param {Number} time Time in milisecond
+	         * @return Number
+	         */
 								}, {
-									key: "_getTweenValue",
+									key: '_getTweenValue',
 									value: function _getTweenValue(keyframes, time) {
 										var value = null;
 										// interate over keyframes untill we find the exact value or keyframes either side
@@ -39663,24 +40019,23 @@
 
 										return value;
 									}
+
+									/**
+	        * Method calculates the value between two keyframes
+	        *
+	        * @private
+	        * @param {Object} lastKeyframe left keyframe object
+	        * @param {Object} keyframe right keyframe object
+	        * @param {Number} time Time in milisecond
+	        * @return Number
+	        */
 								}, {
-									key: "_tweenBetweenKeyframes",
+									key: '_tweenBetweenKeyframes',
 									value: function _tweenBetweenKeyframes(lastKeyframe, keyframe, time) {
+										// time difference between keyframes
 										var timeDifference = keyframe.time - lastKeyframe.time;
+										// percentage float 0-1 of time through difference
 										var deltaFloat = (time - lastKeyframe.time) / timeDifference;
-
-										if (keyframe.time < lastKeyframe.time) {
-											// we are looping and needing to use the last keyframe as lastKeyframe
-											timeDifference = this._options.duration - lastKeyframe.time + keyframe.time;
-
-											if (time < lastKeyframe.time) {
-												// time is less that the last keyframe.time and requires the difference
-												// between the last keyframe.time and the duration to be taken into account
-												deltaFloat = (this._options.duration - lastKeyframe.time + time) / timeDifference;
-											} else {
-												deltaFloat = (time - lastKeyframe.time) / timeDifference;
-											}
-										}
 
 										var easedDelta = deltaFloat;
 
@@ -39690,7 +40045,7 @@
 												animatorOptions = _extends({}, animatorOptions, lastKeyframe.animatorOptions);
 											}
 
-											easedDelta = _motionTween2["default"].getValue(lastKeyframe.animatorType, animatorOptions, deltaFloat);
+											easedDelta = _motionTween2['default'].getValue(lastKeyframe.animatorType, animatorOptions, deltaFloat);
 										}
 
 										var valueDifference = keyframe.value - lastKeyframe.value;
@@ -39699,47 +40054,22 @@
 										return tweenedValue;
 									}
 								}, {
-									key: "propertyKeyframesMap",
+									key: 'duration',
 									get: function get() {
-										return this._propertyKeyframesMap;
+										return this._duration;
 									}
 								}, {
-									key: "identifier",
+									key: 'name',
 									get: function get() {
-										return this._identifier;
-									}
-								}, {
-									key: "duration",
-									get: function get() {
-										return this._options.duration;
-									}
-								}, {
-									key: "in",
-									get: function get() {
-										return this._options["in"];
-									}
-								}, {
-									key: "out",
-									get: function get() {
-										return this._options.out;
-									}
-								}, {
-									key: "loop",
-									get: function get() {
-										return this._options.loop;
-									}
-								}, {
-									key: "fillMode",
-									get: function get() {
-										return this._options.fillMode;
+										return this._name;
 									}
 								}]);
 
 								return Tween;
 							})();
 
-							exports["default"] = Tween;
-							module.exports = exports["default"];
+							exports['default'] = Tween;
+							module.exports = exports['default'];
 
 							/***/
 						},
@@ -40828,6 +41158,412 @@
 							module.exports = exports["default"];
 
 							/***/
+						},
+						/* 12 */
+						function (module, exports) {
+
+							"use strict";
+
+							Object.defineProperty(exports, "__esModule", {
+								value: true
+							});
+
+							var _extends = Object.assign || function (target) {
+								for (var i = 1; i < arguments.length; i++) {
+									var source = arguments[i];for (var key in source) {
+										if (Object.prototype.hasOwnProperty.call(source, key)) {
+											target[key] = source[key];
+										}
+									}
+								}return target;
+							};
+
+							var _createClass = (function () {
+								function defineProperties(target, props) {
+									for (var i = 0; i < props.length; i++) {
+										var descriptor = props[i];descriptor.enumerable = descriptor.enumerable || false;descriptor.configurable = true;if ("value" in descriptor) descriptor.writable = true;Object.defineProperty(target, descriptor.key, descriptor);
+									}
+								}return function (Constructor, protoProps, staticProps) {
+									if (protoProps) defineProperties(Constructor.prototype, protoProps);if (staticProps) defineProperties(Constructor, staticProps);return Constructor;
+								};
+							})();
+
+							function _classCallCheck(instance, Constructor) {
+								if (!(instance instanceof Constructor)) {
+									throw new TypeError("Cannot call a class as a function");
+								}
+							}
+
+							var _DEFAULT_OPTIONS = {
+								loop: false,
+								"in": 0,
+								out: null,
+								fillMode: 0
+							};
+
+							var TimelineAbstract = (function () {
+								_createClass(TimelineAbstract, null, [{
+									key: "FILL_MODE",
+									value: {
+										NOME: 0,
+										FORWARD: 1,
+										BACKWARD: 2,
+										BOTH: 3
+									},
+									enumerable: true
+								}]);
+
+								function TimelineAbstract(name, options) {
+									_classCallCheck(this, TimelineAbstract);
+
+									this._options = null;
+									this._name = null;
+
+									this._init(name, options);
+								}
+
+								/*________________________________________________________
+	       	PUBLIC CLASS METHODS
+	       ________________________________________________________*/
+
+								_createClass(TimelineAbstract, [{
+									key: "getState",
+									value: function getState(time) {
+										return this._getState(time);
+									}
+								}, {
+									key: "_init",
+
+									/*________________________________________________________
+	        	PRIVATE CLASS METHODS
+	        ________________________________________________________*/
+
+									value: function _init(name, options) {
+
+										this._validateOptions(options);
+
+										this._options = _extends({}, _DEFAULT_OPTIONS, options);
+
+										this._name = name;
+									}
+								}, {
+									key: "_validateOptions",
+									value: function _validateOptions(options) {}
+								}, {
+									key: "_getState",
+									value: function _getState(time) {}
+
+									/**
+	         * Method iterates through keyframes for each property and determines our relative duration between in and out
+	         *
+	         * @private
+	         */
+								}, {
+									key: "_updateRelativeDuration",
+									value: function _updateRelativeDuration(absoluteDuration) {
+										var inIndex = -1;
+										var duration = absoluteDuration;
+
+										if (this._options["in"] == null) {
+											this._options["in"] = 0;
+										} else {
+											// adjust the duration
+											if (this._options["in"] > duration) {
+												throw Error("In point is set beyond the end of the tween!");
+											}
+											duration -= this._options["in"];
+										}
+
+										if (this._options.out != null) {
+											duration = this._options.out - this._options["in"];
+										} else {
+											this._options.out = this._options["in"] + duration;
+										}
+
+										this._duration = duration;
+
+										if (this._options["in"] > this._options.out) {
+											throw Error("tween in is greater than out!");
+										}
+									}
+
+									/**
+	         * Method takes any time and wraps it accordingly to be within in and out points
+	         *
+	         * @private
+	         * @param {Number} time Time in milisecond
+	         * @return Number
+	         */
+								}, {
+									key: "_loopTime",
+									value: function _loopTime(time) {
+										return ((time - this._options["in"]) % this._duration + this._duration) % this._duration;
+									}
+
+									/**
+	         * Method takes any time and checks whether the time value requires wrapping, if so then returns wrapped time
+	         *
+	         * @private
+	         * @param {Number} time Time in milisecond
+	         * @return Number
+	         */
+								}, {
+									key: "_resolveTime",
+									value: function _resolveTime(time) {
+										if (time < this._options["in"]) {
+											if (this._options.fillMode === TimelineAbstract.FILL_MODE.BACKWARD || this._options.fillMode === TimelineAbstract.FILL_MODE.BOTH) {
+												if (this._options.loop) {
+													return this._loopTime(time);
+												}
+											}
+										}
+
+										if (time > this._options.out) {
+											if (this._options.fillMode === TimelineAbstract.FILL_MODE.FORWARD || this._options.fillMode === TimelineAbstract.FILL_MODE.BOTH) {
+												if (this._options.loop) {
+													return this._loopTime(time);
+												}
+											}
+										}
+
+										return time;
+									}
+								}, {
+									key: "duration",
+									get: function get() {
+										return this._duration;
+									}
+								}, {
+									key: "name",
+									get: function get() {
+										return this._name;
+									}
+								}, {
+									key: "in",
+									get: function get() {
+										return this._options["in"];
+									}
+								}, {
+									key: "out",
+									get: function get() {
+										return this._options.out;
+									}
+								}, {
+									key: "loop",
+									get: function get() {
+										return this._options.loop;
+									}
+								}, {
+									key: "fillMode",
+									get: function get() {
+										return this._options.fillMode;
+									}
+								}]);
+
+								return TimelineAbstract;
+							})();
+
+							exports["default"] = TimelineAbstract;
+							module.exports = exports["default"];
+
+							/***/
+						},
+						/* 13 */
+						function (module, exports, __webpack_require__) {
+
+							'use strict';
+
+							Object.defineProperty(exports, '__esModule', {
+								value: true
+							});
+
+							var _createClass = (function () {
+								function defineProperties(target, props) {
+									for (var i = 0; i < props.length; i++) {
+										var descriptor = props[i];descriptor.enumerable = descriptor.enumerable || false;descriptor.configurable = true;if ('value' in descriptor) descriptor.writable = true;Object.defineProperty(target, descriptor.key, descriptor);
+									}
+								}return function (Constructor, protoProps, staticProps) {
+									if (protoProps) defineProperties(Constructor.prototype, protoProps);if (staticProps) defineProperties(Constructor, staticProps);return Constructor;
+								};
+							})();
+
+							var _get = function get(_x, _x2, _x3) {
+								var _again = true;_function: while (_again) {
+									var object = _x,
+									    property = _x2,
+									    receiver = _x3;_again = false;if (object === null) object = Function.prototype;var desc = Object.getOwnPropertyDescriptor(object, property);if (desc === undefined) {
+										var parent = Object.getPrototypeOf(object);if (parent === null) {
+											return undefined;
+										} else {
+											_x = parent;_x2 = property;_x3 = receiver;_again = true;desc = parent = undefined;continue _function;
+										}
+									} else if ('value' in desc) {
+										return desc.value;
+									} else {
+										var getter = desc.get;if (getter === undefined) {
+											return undefined;
+										}return getter.call(receiver);
+									}
+								}
+							};
+
+							function _interopRequireDefault(obj) {
+								return obj && obj.__esModule ? obj : { 'default': obj };
+							}
+
+							function _classCallCheck(instance, Constructor) {
+								if (!(instance instanceof Constructor)) {
+									throw new TypeError('Cannot call a class as a function');
+								}
+							}
+
+							function _inherits(subClass, superClass) {
+								if (typeof superClass !== 'function' && superClass !== null) {
+									throw new TypeError('Super expression must either be null or a function, not ' + typeof superClass);
+								}subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } });if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass;
+							}
+
+							var _timeline = __webpack_require__(1);
+
+							var _timeline2 = _interopRequireDefault(_timeline);
+
+							var InteractiveTimeline = (function (_Timeline) {
+								_inherits(InteractiveTimeline, _Timeline);
+
+								function InteractiveTimeline(name, options) {
+									_classCallCheck(this, InteractiveTimeline);
+
+									_get(Object.getPrototypeOf(InteractiveTimeline.prototype), 'constructor', this).call(this, name, options);
+									this._sequences = [];
+								}
+
+								/*________________________________________________________
+	       	PUBLIC CLASS METHODS
+	       ________________________________________________________*/
+
+								_createClass(InteractiveTimeline, [{
+									key: 'increment',
+									value: function increment(timeDelta) {
+										return this._increment(timeDelta);
+									}
+								}, {
+									key: 'setSequences',
+									value: function setSequences(sequences) {
+										this._setSequences(sequences);
+									}
+								}, {
+									key: 'getSequences',
+									value: function getSequences() {
+										return this._sequences;
+									}
+
+									/*________________________________________________________
+	        	PRIVATE CLASS METHODS
+	        ________________________________________________________*/
+
+								}, {
+									key: '_increment',
+									value: function _increment(timeDelta) {
+										var outDelta = undefined,
+										    sequenceOutTime = undefined;
+
+										// get current sequence
+										var currentSequence = this._getSequenceByTime(this._currentTime);
+
+										this._currentTime += timeDelta;
+
+										// get updated sequence with current time
+										var prospectiveSequence = this._getSequenceByTime(this._currentTime);
+
+										// using sequences currently only works travelling forwards
+										if (timeDelta > 0) {
+											// we only start to think about redirect if last time was within a sequence
+											if (currentSequence != null) {
+												// check to see we have left the current sequence and that the current sequence has a next location
+												if (currentSequence !== prospectiveSequence && currentSequence.next != null) {
+
+													// if there is a prospective then check that its not the next of current
+													if (prospectiveSequence != null) {
+
+														if (currentSequence.next !== prospectiveSequence.label) {
+															// if duration is set on current the outDelta should be from after the duration
+															if (currentSequence.duration) {
+																sequenceOutTime = currentSequence.time + currentSequence.duration;
+															} else {
+																// otherwise no duration set the current sequence extends to the begining of the prospective
+																sequenceOutTime = prospectiveSequence.time;
+															}
+														} else {
+															sequenceOutTime = prospectiveSequence.time;
+														}
+													} else {
+														// if prospective is null and current is not, then a duration must be set, so use that
+
+														sequenceOutTime = currentSequence.time + currentSequence.duration;
+													}
+													// this makes the assumption we have travelled forward and have moved out of the current sequence to the right,
+													// if we have move out of the sequence to the left therefore backwards the outDelta is from the end of the
+													// sequence
+													outDelta = this._currentTime - sequenceOutTime;
+													// adjust time and update current
+													prospectiveSequence = this._getSequenceByLabel(currentSequence.next);
+
+													this.currentTime = prospectiveSequence.time + outDelta;
+												}
+											}
+										}
+
+										return this._getState(this._currentTime);
+									}
+								}, {
+									key: '_setSequences',
+									value: function _setSequences(sequences) {
+										// merge sequence
+										// validate check for overlaping
+										this._sequences = sequences;
+									}
+								}, {
+									key: '_getSequenceByTime',
+									value: function _getSequenceByTime(time) {
+										var sequence = undefined;
+
+										for (var i = 0; i < this._sequences.length; i++) {
+											if (this._sequences[i].time > time) {
+												break;
+											}
+											sequence = this._sequences[i];
+										}
+
+										if (sequence) {
+											// check if time is beyond last sequence
+											if (sequence.duration && time > sequence.time + sequence.duration) {
+												return null;
+											}
+											// return the current sequence
+											return sequence;
+										}
+
+										// no relevent sequences
+										return null;
+									}
+								}, {
+									key: '_getSequenceByLabel',
+									value: function _getSequenceByLabel(label) {
+										for (var i = 0; i < this._sequences.length; i++) {
+											if (this._sequences[i].label === label) {
+												return this._sequences[i];
+											}
+										}
+									}
+								}]);
+
+								return InteractiveTimeline;
+							})(_timeline2['default']);
+
+							exports['default'] = InteractiveTimeline;
+							module.exports = exports['default'];
+
+							/***/
 						}
 						/******/])
 					);
@@ -40840,7 +41576,7 @@
 		);
 	});
 	;
-	/***/ /***/ /***/ /***/ /***/ /***/ /***/ /***/ /***/ /***/ /***/ /***/ /***/ /***/
+	/***/ /***/ /***/ /***/ /***/ /***/ /***/ /***/ /***/ /***/ /***/ /***/ /***/ /***/ /***/ /***/
 
 /***/ },
 /* 79 */
@@ -40905,7 +41641,7 @@
 			key: "_init",
 			value: function _init() {
 				var state = this._interactiveTimeline.getState(0);
-				var frame = state.get("frames").frame.split(",").map(function (value) {
+				var frame = state.children[0].properties.frame.split(",").map(function (value) {
 					return parseInt(value);
 				});
 
@@ -40936,12 +41672,17 @@
 		}, {
 			key: "_update",
 			value: function _update(deltaTime) {
-				var state = this._interactiveTimeline.increment(deltaTime / _pixiJsBinPixi2["default"].TARGET_FPMS);
-				var frame = state.get("frames").frame.split(",").map(function (value) {
-					return parseInt(value);
-				});
 
-				this._texture.frame = new _pixiJsBinPixi2["default"].Rectangle(frame[0], frame[1], frame[2], frame[3]);
+				var state = this._interactiveTimeline.increment(deltaTime / _pixiJsBinPixi2["default"].TARGET_FPMS);
+				// Need to check for null we can't guarantee that the delta will not be out of range of the timeline.
+				if (state.children.length > 0 && state.children[0].properties.frame != null) {
+					var frame = state.children[0].properties.frame.split(",").map(function (value) {
+						return parseInt(value);
+					});
+
+					this._texture.frame = new _pixiJsBinPixi2["default"].Rectangle(frame[0], frame[1], frame[2], frame[3]);
+				}
+
 				// console.log(deltaTime / 0.06);
 			}
 		}]);
@@ -40987,7 +41728,8 @@
 			time: 200
 		}]
 	};
-	var ringTween = new _timeline.Tween(ringKyframes, "ring", { loop: false, fillMode: _timeline.Tween.FILL_MODE.FORWARD });
+	var ringTween = new _timeline.Tween("ring");
+	ringTween.addKeyframes(ringKyframes);
 
 	var rippleKyframes = {
 		radius: [{
@@ -41006,8 +41748,8 @@
 		}]
 	};
 
-	var rippleTween = new _timeline.Tween(rippleKyframes, "ripple", { loop: false, fillMode: 0 });
-	var ripple2Tween = new _timeline.Tween(rippleKyframes, "ripple2", { loop: false, fillMode: 0 });
+	var rippleTween = new _timeline.Tween("ripple");
+	rippleTween.addKeyframes(rippleKyframes);
 
 	var ripple3Kyframes = {
 		radius: [{
@@ -41033,7 +41775,8 @@
 			time: 400
 		}]
 	};
-	var ripple3Tween = new _timeline.Tween(ripple3Kyframes, "ripple3", { loop: false, fillMode: _timeline.Tween.FILL_MODE.FORWARD });
+	var ripple3Tween = new _timeline.Tween("ripple3");
+	ripple3Tween.addKeyframes(ripple3Kyframes);
 
 	var ripple4Kyframes = {
 		radius: [{
@@ -41059,7 +41802,8 @@
 			time: 288
 		}]
 	};
-	var ripple4Tween = new _timeline.Tween(ripple4Kyframes, "ripple4", { loop: false, fillMode: _timeline.Tween.FILL_MODE.FORWARD });
+	var ripple4Tween = new _timeline.Tween("ripple4");
+	ripple4Tween.addKeyframes(ripple4Kyframes);
 
 	var plusKyframes = {
 		width: [{
@@ -41070,24 +41814,23 @@
 			time: 830
 		}]
 	};
-	var plusTween = new _timeline.Tween(plusKyframes, "plus", { loop: false, fillMode: _timeline.Tween.FILL_MODE.FORWARD });
+	var plusTween = new _timeline.Tween("plus");
+	plusTween.addKeyframes(plusKyframes);
 
-	var sequences = [{
+	var it = new _timeline.InteractiveTimeline("hotspot");
+
+	it.addChild(ringTween, { loop: false, fillMode: _timeline.Timeline.FILL_MODE.FORWARD });
+	it.addChild(rippleTween, { time: 130, loop: false, fillMode: _timeline.Timeline.FILL_MODE.NONE });
+	it.addChild(rippleTween, { time: 260, loop: false, fillMode: _timeline.Timeline.FILL_MODE.NONE });
+	it.addChild(ripple3Tween, { time: 390, loop: false, fillMode: _timeline.Timeline.FILL_MODE.FORWARD });
+	it.addChild(ripple4Tween, { time: 520, loop: false, fillMode: _timeline.Timeline.FILL_MODE.FORWARD });
+	it.addChild(plusTween, { loop: false, fillMode: _timeline.Timeline.FILL_MODE.FORWARD });
+	it.setSequences([{
 		time: 0,
 		duration: 830,
-		label: "intro"
-	}];
-
-	// next: "intro"
-	var it = new _timeline.InteractiveTimeline();
-
-	it.addTween(ringTween, 0);
-	it.addTween(rippleTween, 130);
-	it.addTween(ripple2Tween, 260);
-	it.addTween(ripple3Tween, 390);
-	it.addTween(ripple4Tween, 520);
-	it.addTween(plusTween, 0);
-	it.setSequences(sequences);
+		label: "intro",
+		next: "intro"
+	}]);
 
 	var timeline = it;
 	exports.timeline = timeline;

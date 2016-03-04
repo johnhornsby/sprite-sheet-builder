@@ -33,6 +33,7 @@ class Main {
 
 	_init() {
 		this._render = ::this._render;
+
 		this._createTimeline();
 
 		this._frameWidth = 128;
@@ -59,6 +60,7 @@ class Main {
 		const texture = new PIXI.Texture(baseTexture);
 		PIXI.Texture.addTextureToCache(texture, "animation");
 
+
 		// Parse SpriteSheet data to cache textures
 		// this._parseJSON(spriteSheetBuilder.getSpriteSheetJSONData()[0].frames, baseTexture);
 
@@ -69,6 +71,13 @@ class Main {
 		const interactiveSprite = new InteractiveSprite(texture, spriteSheetBuilder.getSpriteSheetTimeline());
 		this._rootContainer.addChild(interactiveSprite);
 		interactiveSprite.play();
+
+		// render out the complete sprite sheet so we can see it
+		const canvas = document.createElement('canvas');
+		canvas.width = spriteSheetBuilder.getSpriteSheetCanvas()[0].width;
+		canvas.height = spriteSheetBuilder.getSpriteSheetCanvas()[0].height;
+		canvas.getContext("2d").drawImage(spriteSheetBuilder.getSpriteSheetCanvas()[0], 0, 0);
+		document.body.appendChild(canvas);
 	}
 
 
@@ -100,58 +109,122 @@ class Main {
 		let alpha;
 		let width;
 
-		radius = state.get("ripple").radius;
-		alpha = state.get("ripple").alpha;
+		for (let i = 0; i < state.children.length; i ++) {
+			switch(state.children[i].name) {
 
-		ctx.beginPath();
-		ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
-		ctx.lineWidth = 1;
-		ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
-		ctx.stroke();
+				case "ripple":
+					radius = state.children[i].properties.radius;
+					alpha = state.children[i].properties.alpha;
 
-		radius = state.get("ripple2").radius;
-		alpha = state.get("ripple2").alpha;
+					ctx.beginPath();
+					ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+					ctx.lineWidth = 1;
+					ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
+					ctx.stroke();
+					break;
 
-		ctx.beginPath();
-		ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
-		ctx.lineWidth = 1;
-		ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
-		ctx.stroke();
+				case "ripple3":
+					radius = state.children[i].properties.radius;
+					alpha = state.children[i].properties.alpha;
 
-		radius = state.get("ripple3").radius;
-		alpha = state.get("ripple3").alpha;
+					ctx.beginPath();
+					ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+					ctx.lineWidth = 1;
+					ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
+					ctx.stroke();
+					break;
 
-		ctx.beginPath();
-		ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
-		ctx.lineWidth = 1;
-		ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
-		ctx.stroke();
+				case "ripple4":
+					radius = state.children[i].properties.radius;
+					alpha = state.children[i].properties.alpha;
 
-		radius = state.get("ripple4").radius;
-		alpha = state.get("ripple4").alpha;
+					ctx.beginPath();
+					ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+					ctx.lineWidth = 1;
+					ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
+					ctx.stroke();
+					break;
 
-		ctx.beginPath();
-		ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
-		ctx.lineWidth = 1;
-		ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
-		ctx.stroke();
+				case "ring":
+					radius = state.children[i].properties.radius;
+					alpha = state.children[i].properties.alpha;
+					width = state.children[i].properties.width;
+
+					ctx.beginPath();
+					ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+					ctx.lineWidth = width;
+					ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
+					ctx.stroke();
+					break;
+
+				case "plus":
+					width = state.children[i].properties.width;
+
+					ctx.fillStyle = "white";
+					ctx.fillRect((this._frameWidth - width) / 2, this._frameHeight / 2, width, 1);
+					ctx.fillRect(this._frameWidth / 2, (this._frameHeight - width) / 2, 1, width);
+					break;
 
 
-		radius = state.get("ring").radius;
-		alpha = state.get("ring").alpha;
-		width = state.get("ring").width;
+			}
+		}
 
-		ctx.beginPath();
-		ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
-		ctx.lineWidth = width;
-		ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
-		ctx.stroke();
+	
+		// radius = state.get("ripple").radius;
+		// alpha = state.get("ripple").alpha;
 
-		width = state.get("plus").width;
+		// ctx.beginPath();
+		// ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+		// ctx.lineWidth = 1;
+		// ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
+		// ctx.stroke();
 
-		ctx.fillStyle = "white";
-		ctx.fillRect((this._frameWidth - width) / 2, this._frameHeight / 2, width, 1);
-		ctx.fillRect(this._frameWidth / 2, (this._frameHeight - width) / 2, 1, width);
+		// if (state.get("ripple2")) {
+		// 	radius = state.get("ripple2").radius;
+		// 	alpha = state.get("ripple2").alpha;
+
+		// 	ctx.beginPath();
+		// 	ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+		// 	ctx.lineWidth = 1;
+		// 	ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
+		// 	ctx.stroke();
+		// }
+		
+
+		// radius = state.get("ripple3").radius;
+		// alpha = state.get("ripple3").alpha;
+
+		// ctx.beginPath();
+		// ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+		// ctx.lineWidth = 1;
+		// ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
+		// ctx.stroke();
+
+		// radius = state.get("ripple4").radius;
+		// alpha = state.get("ripple4").alpha;
+
+		// ctx.beginPath();
+		// ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+		// ctx.lineWidth = 1;
+		// ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
+		// ctx.stroke();
+
+
+		// radius = state.get("ring").radius;
+		// alpha = state.get("ring").alpha;
+		// width = state.get("ring").width;
+
+		// ctx.beginPath();
+		// ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+		// ctx.lineWidth = width;
+		// ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
+		// ctx.stroke();
+
+		// width = state.get("plus").width;
+
+		// ctx.fillStyle = "white";
+		// ctx.fillRect((this._frameWidth - width) / 2, this._frameHeight / 2, width, 1);
+		// ctx.fillRect(this._frameWidth / 2, (this._frameHeight - width) / 2, 1, width);
 
 	}
 

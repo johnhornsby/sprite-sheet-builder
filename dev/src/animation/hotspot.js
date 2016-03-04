@@ -1,4 +1,4 @@
-import {InteractiveTimeline, Tween, MotionTween} from "timeline";
+import {InteractiveTimeline, Timeline, Tween, MotionTween} from "timeline";
 
 const ringKyframes = {
 	radius: [
@@ -32,7 +32,8 @@ const ringKyframes = {
 		}
 	]
 }
-const ringTween = new Tween(ringKyframes, "ring", { loop: false, fillMode: Tween.FILL_MODE.FORWARD });
+const ringTween = new Tween("ring");
+ringTween.addKeyframes(ringKyframes);
 
 
 const rippleKyframes = {
@@ -58,8 +59,8 @@ const rippleKyframes = {
 	]
 }
 
-const rippleTween = new Tween(rippleKyframes, "ripple", { loop: false, fillMode: 0 });
-const ripple2Tween = new Tween(rippleKyframes, "ripple2", { loop: false, fillMode: 0 });
+const rippleTween = new Tween("ripple");
+rippleTween.addKeyframes(rippleKyframes);
 
 const ripple3Kyframes = {
 	radius: [
@@ -91,7 +92,8 @@ const ripple3Kyframes = {
 		}
 	]
 }
-const ripple3Tween = new Tween(ripple3Kyframes, "ripple3", { loop: false, fillMode: Tween.FILL_MODE.FORWARD });
+const ripple3Tween = new Tween("ripple3");
+ripple3Tween.addKeyframes(ripple3Kyframes);
 
 const ripple4Kyframes = {
 	radius: [
@@ -123,7 +125,8 @@ const ripple4Kyframes = {
 		}
 	]
 }
-const ripple4Tween = new Tween(ripple4Kyframes, "ripple4", { loop: false, fillMode: Tween.FILL_MODE.FORWARD });
+const ripple4Tween = new Tween("ripple4");
+ripple4Tween.addKeyframes(ripple4Kyframes);
 
 const plusKyframes = {
 	width: [
@@ -137,26 +140,26 @@ const plusKyframes = {
 		}
 	]
 }
-const plusTween = new Tween(plusKyframes, "plus", { loop: false, fillMode: Tween.FILL_MODE.FORWARD });
+const plusTween = new Tween("plus");
+plusTween.addKeyframes(plusKyframes);
 
-const sequences = [
+
+
+const it = new InteractiveTimeline("hotspot");
+
+it.addChild(ringTween, { loop: false, fillMode: Timeline.FILL_MODE.FORWARD });
+it.addChild(rippleTween, {time: 130, loop: false, fillMode: Timeline.FILL_MODE.NONE });
+it.addChild(rippleTween, {time: 260, loop: false, fillMode: Timeline.FILL_MODE.NONE });
+it.addChild(ripple3Tween, { time: 390, loop: false, fillMode: Timeline.FILL_MODE.FORWARD });
+it.addChild(ripple4Tween, { time: 520, loop: false, fillMode: Timeline.FILL_MODE.FORWARD });
+it.addChild(plusTween, { loop: false, fillMode: Timeline.FILL_MODE.FORWARD });
+it.setSequences([
 	{
 		time: 0,
 		duration: 830,
 		label: "intro",
-		// next: "intro"
+		next: "intro"
 	}
-];
-
-
-const it = new InteractiveTimeline();
-
-it.addTween(ringTween, 0);
-it.addTween(rippleTween, 130);
-it.addTween(ripple2Tween, 260);
-it.addTween(ripple3Tween, 390);
-it.addTween(ripple4Tween, 520);
-it.addTween(plusTween, 0);
-it.setSequences(sequences);
+]);
 
 export const timeline = it;

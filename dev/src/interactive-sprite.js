@@ -45,7 +45,7 @@ export default class InteractiveSprite extends PIXI.Sprite {
 
 	_init() {
 		const state = this._interactiveTimeline.getState(0);
-		const frame = state.get("frames").frame.split(",").map(value => parseInt(value));
+		const frame = state.children[0].properties.frame.split(",").map(value => parseInt(value));
 
 		this._texture.frame = new PIXI.Rectangle(frame[0], frame[1], frame[2], frame[3]);
 	}
@@ -74,10 +74,15 @@ export default class InteractiveSprite extends PIXI.Sprite {
 
 
 	_update(deltaTime) {
-		const state = this._interactiveTimeline.increment(deltaTime / PIXI.TARGET_FPMS);
-		const frame = state.get("frames").frame.split(",").map(value => parseInt(value));
 
-		this._texture.frame = new PIXI.Rectangle(frame[0], frame[1], frame[2], frame[3]);
+		const state = this._interactiveTimeline.increment(deltaTime / PIXI.TARGET_FPMS);
+		// Need to check for null we can't guarantee that the delta will not be out of range of the timeline.
+		if (state.children.length > 0 && state.children[0].properties.frame != null) {
+			const frame = state.children[0].properties.frame.split(",").map(value => parseInt(value));
+
+			this._texture.frame = new PIXI.Rectangle(frame[0], frame[1], frame[2], frame[3]);
+		}
+		
 		// console.log(deltaTime / 0.06);
 	}
 }
