@@ -7467,9 +7467,17 @@
 				spriteSheetBuilder.build(options);
 
 				// Use the finished canvas, convert into PIXI texture
-				var baseTexture = _pixiJsBinPixi2["default"].BaseTexture.fromCanvas(spriteSheetBuilder.getSpriteSheetCanvas()[0]);
-				var texture = new _pixiJsBinPixi2["default"].Texture(baseTexture);
-				_pixiJsBinPixi2["default"].Texture.addTextureToCache(texture, "animation");
+				var cavnasArray = spriteSheetBuilder.getSpriteSheetCanvas();
+
+				var baseTexture = undefined,
+				    texture = undefined,
+				    canvas = undefined;
+
+				for (var i = 0; i < cavnasArray.length; i++) {
+					baseTexture = _pixiJsBinPixi2["default"].BaseTexture.fromCanvas(spriteSheetBuilder.getSpriteSheetCanvas()[0]);
+					texture = new _pixiJsBinPixi2["default"].Texture(baseTexture);
+					_pixiJsBinPixi2["default"].Texture.addTextureToCache(texture, "animation-" + i);
+				}
 
 				// Parse SpriteSheet data to cache textures
 				// this._parseJSON(spriteSheetBuilder.getSpriteSheetJSONData()[0].frames, baseTexture);
@@ -7483,11 +7491,13 @@
 				interactiveSprite.play();
 
 				// render out the complete sprite sheet so we can see it
-				var canvas = document.createElement('canvas');
-				canvas.width = spriteSheetBuilder.getSpriteSheetCanvas()[0].width;
-				canvas.height = spriteSheetBuilder.getSpriteSheetCanvas()[0].height;
-				canvas.getContext("2d").drawImage(spriteSheetBuilder.getSpriteSheetCanvas()[0], 0, 0);
-				document.body.appendChild(canvas);
+				for (var i = 0; i < cavnasArray.length; i++) {
+					canvas = document.createElement('canvas');
+					canvas.width = spriteSheetBuilder.getSpriteSheetCanvas()[i].width;
+					canvas.height = spriteSheetBuilder.getSpriteSheetCanvas()[i].height;
+					canvas.getContext("2d").drawImage(spriteSheetBuilder.getSpriteSheetCanvas()[i], 0, 0);
+					document.body.appendChild(canvas);
+				}
 			}
 		}, {
 			key: "_build",
@@ -7518,6 +7528,8 @@
 				var radius = undefined;
 				var alpha = undefined;
 				var width = undefined;
+
+				// @TODO match drawing methods with the tweens no matter their depth
 
 				for (var i = 0; i < state.children.length; i++) {
 					switch (state.children[i].name) {
@@ -7825,12 +7837,14 @@
 				enumerable: true
 			}]);
 
-			function Timeline(name, options) {
+			function Timeline(name, keyframesObject, options) {
 				_classCallCheck(this, Timeline);
 
-				_get(Object.getPrototypeOf(Timeline.prototype), 'constructor', this).call(this, name);
+				_get(Object.getPrototypeOf(Timeline.prototype), 'constructor', this).call(this, name, keyframesObject, options);
+
 				this._children = [];
 				this._currentTime = 0;
+				this._options = _extends({}, _TIMELINE_DEFAULT_OPTIONS, options);
 			}
 
 			/*________________________________________________________
@@ -7853,19 +7867,12 @@
 					this._addChild(child, options);
 				}
 			}, {
-				key: '_init',
+				key: '_addChild',
 
 				/*________________________________________________________
 		  	PRIVATE CLASS METHODS
 		  ________________________________________________________*/
 
-				value: function _init(name, options) {
-					_get(Object.getPrototypeOf(Timeline.prototype), '_init', this).call(this, name);
-
-					this._options = _extends({}, _TIMELINE_DEFAULT_OPTIONS, options);
-				}
-			}, {
-				key: '_addChild',
 				value: function _addChild(child, options) {
 					// clone options into settings property
 					var o = {
@@ -7892,14 +7899,15 @@
 
 					this._children.push(o);
 
-					var absoluteDuration = this._getChildrenDuration();
+					var childDuration = this._getChildrenDuration();
 
-					this._duration = absoluteDuration;
+					var localDuration = this._getKeyframesDuration();
+
+					this._duration = Math.max(childDuration, localDuration);
 				}
 			}, {
 				key: '_validateChildOptions',
 				value: function _validateChildOptions(settings) {
-
 					var fillModes = Object.keys(Timeline.FILL_MODE).map(function (key) {
 						return Timeline.FILL_MODE[key];
 					});
@@ -7941,9 +7949,18 @@
 					var _this = this;
 
 					var state = new _timelineState2['default'](_timelineState2['default'].TYPE.TIMELINE, this._name);
-					var tweenState = undefined;
+					var tweenState = undefined,
+					    resolvedTime = undefined;
 
-					var resolvedTime = undefined;
+					// Check to see if we have specified the 'timeRemap' property,
+					// if so remap time and then obtain state
+					if (this._propertyKeyframesMap.size > 0) {
+						if (this._propertyKeyframesMap.has("timeRemap")) {
+							var keyframes = this._propertyKeyframesMap.get("timeRemap");
+
+							time = this._getTimeRemapTweenValue(keyframes, time);
+						}
+					}
 
 					this._children.forEach(function (childObjectData, index) {
 
@@ -8013,6 +8030,85 @@
 					}
 
 					return childRelativeTime;
+				}
+
+				/**
+		   * Method takes an array of timeRemap Keyframes and time and returns the tweened time at that time
+		   *
+		   * @private
+		   * @param {Array} keyframes Array of keyframe objects with time and value properties.
+		   * @param {Number} time Time in milisecond
+		   * @return Number
+		   */
+			}, {
+				key: '_getTimeRemapTweenValue',
+				value: function _getTimeRemapTweenValue(keyframes, time) {
+					var value = null;
+					// interate over keyframes untill we find the exact value or keyframes either side
+					var length = keyframes.length;
+					var keyframe = undefined,
+					    keyframeValue = undefined;
+					var lastKeyframe = undefined;
+
+					// the aim here is to find the keyframe to either side of the time value
+
+					var previousKeyframe = null;
+					var nextKeyframe = null;
+
+					for (var i = 0; i < length; i++) {
+						keyframe = keyframes[i];
+						keyframeValue = keyframe.value;
+
+						if (time === keyframe.time) {
+							return keyframe.value;
+						} else if (time > keyframe.time) {
+							previousKeyframe = keyframe;
+							// no need to break here as we continue iterating through keyFrames to find the keyframe just previous to the time value
+						} else if (time < keyframe.time) {
+								nextKeyframe = keyframe;
+								break; // break here has we have gone far enough to get the next keyFrame
+							}
+					}
+
+					if (previousKeyframe == null && nextKeyframe == null) {
+						return value;
+					}
+
+					if (previousKeyframe == null) {
+						// when we have no previouskeyframe the natural behaviour differs from standard tween keyframes,
+						// instead of gleening the next keyframe value, we want to determine the time relative to the
+						// time remaped at the nextKeyframe value. Look at the example below
+
+						// nextKeyframe.time = 50
+						// nextKeyframe.value = 25
+						// time = 30
+						// value = nextKeyframe.value - (nextKeyframe.time - time) // ergo 5
+
+						return nextKeyframe.value - (nextKeyframe.time - time);
+					}
+
+					if (nextKeyframe == null) {
+
+						// see above reasoning
+
+						// previousKeyframe.time = 50
+						// previousKeyframe.value = 25
+						// time = 70
+						// value = previousKeyframe.value - (previousKeyframe.time - time) // ergo 45
+
+						return previousKeyframe.value - (previousKeyframe.time - time);
+					}
+
+					if (previousKeyframe != null && nextKeyframe != null) {
+						// check for a hold keyframe
+						if (previousKeyframe.hold != null && previousKeyframe.hold === true) {
+							return previousKeyframe.value;
+						}
+
+						value = this._tweenBetweenKeyframes(previousKeyframe, nextKeyframe, time);
+					}
+
+					return value;
 				}
 			}, {
 				key: '_next',
@@ -8178,11 +8274,7 @@
 				this._name = null;
 				this._duration = 0;
 
-				this._init(name);
-
-				if (keyframesObject != null) {
-					this._addKeyframes(keyframesObject);
-				}
+				this._init(name, keyframesObject);
 			}
 
 			/*________________________________________________________
@@ -8206,7 +8298,7 @@
 		  	PRIVATE CLASS METHODS
 		  ________________________________________________________*/
 
-				value: function _init(name) {
+				value: function _init(name, keyframesObject) {
 
 					if (name == null) {
 						throw Error("Name not specified");
@@ -8215,6 +8307,10 @@
 					this._name = name;
 
 					this._propertyKeyframesMap = new Map();
+
+					if (keyframesObject != null) {
+						this._addKeyframes(keyframesObject);
+					}
 				}
 			}, {
 				key: '_addKeyframes',
@@ -39542,12 +39638,14 @@
 									enumerable: true
 								}]);
 
-								function Timeline(name, options) {
+								function Timeline(name, keyframesObject, options) {
 									_classCallCheck(this, Timeline);
 
-									_get(Object.getPrototypeOf(Timeline.prototype), 'constructor', this).call(this, name);
+									_get(Object.getPrototypeOf(Timeline.prototype), 'constructor', this).call(this, name, keyframesObject, options);
+
 									this._children = [];
 									this._currentTime = 0;
+									this._options = _extends({}, _TIMELINE_DEFAULT_OPTIONS, options);
 								}
 
 								/*________________________________________________________
@@ -39570,19 +39668,12 @@
 										this._addChild(child, options);
 									}
 								}, {
-									key: '_init',
+									key: '_addChild',
 
 									/*________________________________________________________
 	        	PRIVATE CLASS METHODS
 	        ________________________________________________________*/
 
-									value: function _init(name, options) {
-										_get(Object.getPrototypeOf(Timeline.prototype), '_init', this).call(this, name);
-
-										this._options = _extends({}, _TIMELINE_DEFAULT_OPTIONS, options);
-									}
-								}, {
-									key: '_addChild',
 									value: function _addChild(child, options) {
 										// clone options into settings property
 										var o = {
@@ -39609,14 +39700,15 @@
 
 										this._children.push(o);
 
-										var absoluteDuration = this._getChildrenDuration();
+										var childDuration = this._getChildrenDuration();
 
-										this._duration = absoluteDuration;
+										var localDuration = this._getKeyframesDuration();
+
+										this._duration = Math.max(childDuration, localDuration);
 									}
 								}, {
 									key: '_validateChildOptions',
 									value: function _validateChildOptions(settings) {
-
 										var fillModes = Object.keys(Timeline.FILL_MODE).map(function (key) {
 											return Timeline.FILL_MODE[key];
 										});
@@ -39658,9 +39750,18 @@
 										var _this = this;
 
 										var state = new _timelineState2['default'](_timelineState2['default'].TYPE.TIMELINE, this._name);
-										var tweenState = undefined;
+										var tweenState = undefined,
+										    resolvedTime = undefined;
 
-										var resolvedTime = undefined;
+										// Check to see if we have specified the 'timeRemap' property,
+										// if so remap time and then obtain state
+										if (this._propertyKeyframesMap.size > 0) {
+											if (this._propertyKeyframesMap.has("timeRemap")) {
+												var keyframes = this._propertyKeyframesMap.get("timeRemap");
+
+												time = this._getTimeRemapTweenValue(keyframes, time);
+											}
+										}
 
 										this._children.forEach(function (childObjectData, index) {
 
@@ -39730,6 +39831,85 @@
 										}
 
 										return childRelativeTime;
+									}
+
+									/**
+	         * Method takes an array of timeRemap Keyframes and time and returns the tweened time at that time
+	         *
+	         * @private
+	         * @param {Array} keyframes Array of keyframe objects with time and value properties.
+	         * @param {Number} time Time in milisecond
+	         * @return Number
+	         */
+								}, {
+									key: '_getTimeRemapTweenValue',
+									value: function _getTimeRemapTweenValue(keyframes, time) {
+										var value = null;
+										// interate over keyframes untill we find the exact value or keyframes either side
+										var length = keyframes.length;
+										var keyframe = undefined,
+										    keyframeValue = undefined;
+										var lastKeyframe = undefined;
+
+										// the aim here is to find the keyframe to either side of the time value
+
+										var previousKeyframe = null;
+										var nextKeyframe = null;
+
+										for (var i = 0; i < length; i++) {
+											keyframe = keyframes[i];
+											keyframeValue = keyframe.value;
+
+											if (time === keyframe.time) {
+												return keyframe.value;
+											} else if (time > keyframe.time) {
+												previousKeyframe = keyframe;
+												// no need to break here as we continue iterating through keyFrames to find the keyframe just previous to the time value
+											} else if (time < keyframe.time) {
+													nextKeyframe = keyframe;
+													break; // break here has we have gone far enough to get the next keyFrame
+												}
+										}
+
+										if (previousKeyframe == null && nextKeyframe == null) {
+											return value;
+										}
+
+										if (previousKeyframe == null) {
+											// when we have no previouskeyframe the natural behaviour differs from standard tween keyframes,
+											// instead of gleening the next keyframe value, we want to determine the time relative to the
+											// time remaped at the nextKeyframe value. Look at the example below
+
+											// nextKeyframe.time = 50
+											// nextKeyframe.value = 25
+											// time = 30
+											// value = nextKeyframe.value - (nextKeyframe.time - time) // ergo 5
+
+											return nextKeyframe.value - (nextKeyframe.time - time);
+										}
+
+										if (nextKeyframe == null) {
+
+											// see above reasoning
+
+											// previousKeyframe.time = 50
+											// previousKeyframe.value = 25
+											// time = 70
+											// value = previousKeyframe.value - (previousKeyframe.time - time) // ergo 45
+
+											return previousKeyframe.value - (previousKeyframe.time - time);
+										}
+
+										if (previousKeyframe != null && nextKeyframe != null) {
+											// check for a hold keyframe
+											if (previousKeyframe.hold != null && previousKeyframe.hold === true) {
+												return previousKeyframe.value;
+											}
+
+											value = this._tweenBetweenKeyframes(previousKeyframe, nextKeyframe, time);
+										}
+
+										return value;
 									}
 								}, {
 									key: '_next',
@@ -39931,11 +40111,7 @@
 									this._name = null;
 									this._duration = 0;
 
-									this._init(name);
-
-									if (keyframesObject != null) {
-										this._addKeyframes(keyframesObject);
-									}
+									this._init(name, keyframesObject);
 								}
 
 								/*________________________________________________________
@@ -39959,7 +40135,7 @@
 	        	PRIVATE CLASS METHODS
 	        ________________________________________________________*/
 
-									value: function _init(name) {
+									value: function _init(name, keyframesObject) {
 
 										if (name == null) {
 											throw Error("Name not specified");
@@ -39968,6 +40144,10 @@
 										this._name = name;
 
 										this._propertyKeyframesMap = new Map();
+
+										if (keyframesObject != null) {
+											this._addKeyframes(keyframesObject);
+										}
 									}
 								}, {
 									key: '_addKeyframes',
@@ -41870,17 +42050,31 @@
 		}]
 	});
 
-	var hotspotTimeline = new _timeline.InteractiveTimeline("hotspot");
+	var hotspotTimeline = new _timeline.InteractiveTimeline("hotspot", {
+		timeRemap: [{
+			time: 0,
+			value: 0
+		}, {
+			time: 5000,
+			value: 830
+		}]
+	});
 
-	hotspotTimeline.addChild(ringTween, { fillMode: _timeline.Timeline.FILL_MODE.FORWARD });
-	hotspotTimeline.addChild(rippleTween, { time: 130, fillMode: _timeline.Timeline.FILL_MODE.NONE });
-	hotspotTimeline.addChild(rippleTween, { time: 260, fillMode: _timeline.Timeline.FILL_MODE.FORWARD });
-	hotspotTimeline.addChild(ripple3Tween, { time: 390, fillMode: _timeline.Timeline.FILL_MODE.FORWARD });
-	hotspotTimeline.addChild(ripple4Tween, { time: 520, fillMode: _timeline.Timeline.FILL_MODE.FORWARD });
-	hotspotTimeline.addChild(plusTween, { fillMode: _timeline.Timeline.FILL_MODE.FORWARD });
+	var rippleTimeline = new _timeline.Timeline("ripples");
+
+	rippleTimeline.addChild(rippleTween, { fillMode: _timeline.Timeline.FILL_MODE.FORWARD, loop: true });
+
+	// hotspotTimeline.addChild(ringTween, { fillMode: Timeline.FILL_MODE.FORWARD });
+	// hotspotTimeline.addChild(rippleTween, { time: 130, fillMode: Timeline.FILL_MODE.NONE });
+	// hotspotTimeline.addChild(rippleTween, { time: 260, fillMode: Timeline.FILL_MODE.FORWARD });
+	// hotspotTimeline.addChild(ripple3Tween, { time: 390, fillMode: Timeline.FILL_MODE.FORWARD });
+	// hotspotTimeline.addChild(ripple4Tween, { time: 520, fillMode: Timeline.FILL_MODE.FORWARD });
+	// hotspotTimeline.addChild(plusTween, { fillMode: Timeline.FILL_MODE.FORWARD });
+
+	hotspotTimeline.addChild(rippleTimeline);
 
 	hotspotTimeline.setSequences([{
-		time: 0, duration: 830, label: "intro", next: "intro"
+		time: 0, duration: 5000, label: "intro", next: "intro"
 	}]);
 
 	var timeline = hotspotTimeline;

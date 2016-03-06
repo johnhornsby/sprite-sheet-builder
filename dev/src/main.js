@@ -56,9 +56,17 @@ class Main {
 
 
 		// Use the finished canvas, convert into PIXI texture
-		const baseTexture = PIXI.BaseTexture.fromCanvas(spriteSheetBuilder.getSpriteSheetCanvas()[0]);
-		const texture = new PIXI.Texture(baseTexture);
-		PIXI.Texture.addTextureToCache(texture, "animation");
+		const cavnasArray = spriteSheetBuilder.getSpriteSheetCanvas();
+
+		let baseTexture, texture, canvas;
+
+		for (let i = 0; i < cavnasArray.length; i++) {
+			baseTexture = PIXI.BaseTexture.fromCanvas(spriteSheetBuilder.getSpriteSheetCanvas()[0]);
+			texture = new PIXI.Texture(baseTexture);
+			PIXI.Texture.addTextureToCache(texture, `animation-${i}`);
+		}
+
+		
 
 
 		// Parse SpriteSheet data to cache textures
@@ -72,12 +80,15 @@ class Main {
 		this._rootContainer.addChild(interactiveSprite);
 		interactiveSprite.play();
 
+
 		// render out the complete sprite sheet so we can see it
-		const canvas = document.createElement('canvas');
-		canvas.width = spriteSheetBuilder.getSpriteSheetCanvas()[0].width;
-		canvas.height = spriteSheetBuilder.getSpriteSheetCanvas()[0].height;
-		canvas.getContext("2d").drawImage(spriteSheetBuilder.getSpriteSheetCanvas()[0], 0, 0);
-		document.body.appendChild(canvas);
+		for (let i = 0; i < cavnasArray.length; i++) {
+			canvas = document.createElement('canvas');
+			canvas.width = spriteSheetBuilder.getSpriteSheetCanvas()[i].width;
+			canvas.height = spriteSheetBuilder.getSpriteSheetCanvas()[i].height;
+			canvas.getContext("2d").drawImage(spriteSheetBuilder.getSpriteSheetCanvas()[i], 0, 0);
+			document.body.appendChild(canvas);
+		}
 	}
 
 
@@ -108,6 +119,8 @@ class Main {
 		let radius;
 		let alpha;
 		let width;
+
+		// @TODO match drawing methods with the tweens no matter their depth
 
 		for (let i = 0; i < state.children.length; i ++) {
 			switch(state.children[i].name) {

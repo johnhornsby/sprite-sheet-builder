@@ -26,6 +26,6 @@
   "dependencies": {
     "babel-polyfill": "^6.3.14",
     "pixi.js": "^3.0.9",
-    "timeline": "git+https://github.com/johnhornsby/timeline.git#e6a95be"
+    "timeline": "git+https://github.com/johnhornsby/timeline.git#de53988"
   }
 }

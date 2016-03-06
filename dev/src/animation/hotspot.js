@@ -122,18 +122,38 @@ const plusTween = new Tween("plus", {
 });
 
 
-const hotspotTimeline = new InteractiveTimeline("hotspot");
+const hotspotTimeline = new InteractiveTimeline("hotspot", {
+	timeRemap: [
+		{
+			time: 0,
+			value: 0
+		},
+		{
+			time: 5000,
+			value: 830
+		}
+	]
+});
 
-hotspotTimeline.addChild(ringTween, { fillMode: Timeline.FILL_MODE.FORWARD });
-hotspotTimeline.addChild(rippleTween, { time: 130, fillMode: Timeline.FILL_MODE.NONE });
-hotspotTimeline.addChild(rippleTween, { time: 260, fillMode: Timeline.FILL_MODE.FORWARD });
-hotspotTimeline.addChild(ripple3Tween, { time: 390, fillMode: Timeline.FILL_MODE.FORWARD });
-hotspotTimeline.addChild(ripple4Tween, { time: 520, fillMode: Timeline.FILL_MODE.FORWARD });
-hotspotTimeline.addChild(plusTween, { fillMode: Timeline.FILL_MODE.FORWARD });
+const rippleTimeline = new Timeline("ripples");
+
+rippleTimeline.addChild(rippleTween, {fillMode: Timeline.FILL_MODE.FORWARD, loop: true});
+
+
+
+// hotspotTimeline.addChild(ringTween, { fillMode: Timeline.FILL_MODE.FORWARD });
+// hotspotTimeline.addChild(rippleTween, { time: 130, fillMode: Timeline.FILL_MODE.NONE });
+// hotspotTimeline.addChild(rippleTween, { time: 260, fillMode: Timeline.FILL_MODE.FORWARD });
+// hotspotTimeline.addChild(ripple3Tween, { time: 390, fillMode: Timeline.FILL_MODE.FORWARD });
+// hotspotTimeline.addChild(ripple4Tween, { time: 520, fillMode: Timeline.FILL_MODE.FORWARD });
+// hotspotTimeline.addChild(plusTween, { fillMode: Timeline.FILL_MODE.FORWARD });
+
+hotspotTimeline.addChild(rippleTimeline);
+
 
 hotspotTimeline.setSequences([
 	{
-		time: 0, duration: 830, label: "intro", next: "intro"
+		time: 0, duration: 5000, label: "intro", next: "intro"
 	}
 ]);
 
