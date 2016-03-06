@@ -7805,10 +7805,10 @@
 
 		var _CHILD_DEFAULT_OPTIONS = {
 			fillMode: "both",
-			'in': 0,
+			'in': null,
 			loop: false,
 			out: null,
-			time: 0
+			time: null
 		};
 
 		var Timeline = (function (_Tween) {
@@ -7817,7 +7817,7 @@
 			_createClass(Timeline, null, [{
 				key: 'FILL_MODE',
 				value: {
-					NOME: "none",
+					NONE: "none",
 					FORWARD: "forward",
 					BACKWARD: "backward",
 					BOTH: "both"
@@ -7873,16 +7873,52 @@
 						settings: _extends({}, _CHILD_DEFAULT_OPTIONS, options)
 					};
 
+					// set time property if not already set
+					if (o.settings.time == null) {
+						o.settings.time = 0;
+					}
+
+					// set in property if not already set
+					if (o.settings['in'] == null) {
+						o.settings['in'] = o.settings.time;
+					}
+
 					// set out property if not already set
 					if (o.settings.out == null) {
 						o.settings.out = o.settings.time + child.duration;
 					}
+
+					this._validateChildOptions(o.settings);
 
 					this._children.push(o);
 
 					var absoluteDuration = this._getChildrenDuration();
 
 					this._duration = absoluteDuration;
+				}
+			}, {
+				key: '_validateChildOptions',
+				value: function _validateChildOptions(settings) {
+
+					var fillModes = Object.keys(Timeline.FILL_MODE).map(function (key) {
+						return Timeline.FILL_MODE[key];
+					});
+
+					if (fillModes.indexOf(settings.fillMode) === -1) {
+						throw Error("Incorrectly set fillMode: " + settings.fillMode);
+					}
+
+					if (settings['in'] < settings.time) {
+						throw Error("The 'in' option can't preceed the 'time' option");
+					}
+
+					if (settings['in'] > settings.out) {
+						throw Error("The 'in' option can't be after the 'out' option");
+					}
+
+					if (settings.out < settings.time || settings.out < settings['in']) {
+						throw Error("The 'out' option can't preceed the 'time' or 'in' option");
+					}
 				}
 			}, {
 				key: '_removeChild',
@@ -8134,7 +8170,7 @@
 		var _timelineAbstract2 = _interopRequireDefault(_timelineAbstract);
 
 		var Tween = (function () {
-			function Tween(name) {
+			function Tween(name, keyframesObject) {
 				_classCallCheck(this, Tween);
 
 				this._propertyKeyframesMap = null;
@@ -8143,6 +8179,10 @@
 				this._duration = 0;
 
 				this._init(name);
+
+				if (keyframesObject != null) {
+					this._addKeyframes(keyframesObject);
+				}
 			}
 
 			/*________________________________________________________
@@ -39482,10 +39522,10 @@
 
 							var _CHILD_DEFAULT_OPTIONS = {
 								fillMode: "both",
-								'in': 0,
+								'in': null,
 								loop: false,
 								out: null,
-								time: 0
+								time: null
 							};
 
 							var Timeline = (function (_Tween) {
@@ -39494,7 +39534,7 @@
 								_createClass(Timeline, null, [{
 									key: 'FILL_MODE',
 									value: {
-										NOME: "none",
+										NONE: "none",
 										FORWARD: "forward",
 										BACKWARD: "backward",
 										BOTH: "both"
@@ -39550,16 +39590,52 @@
 											settings: _extends({}, _CHILD_DEFAULT_OPTIONS, options)
 										};
 
+										// set time property if not already set
+										if (o.settings.time == null) {
+											o.settings.time = 0;
+										}
+
+										// set in property if not already set
+										if (o.settings['in'] == null) {
+											o.settings['in'] = o.settings.time;
+										}
+
 										// set out property if not already set
 										if (o.settings.out == null) {
 											o.settings.out = o.settings.time + child.duration;
 										}
+
+										this._validateChildOptions(o.settings);
 
 										this._children.push(o);
 
 										var absoluteDuration = this._getChildrenDuration();
 
 										this._duration = absoluteDuration;
+									}
+								}, {
+									key: '_validateChildOptions',
+									value: function _validateChildOptions(settings) {
+
+										var fillModes = Object.keys(Timeline.FILL_MODE).map(function (key) {
+											return Timeline.FILL_MODE[key];
+										});
+
+										if (fillModes.indexOf(settings.fillMode) === -1) {
+											throw Error("Incorrectly set fillMode: " + settings.fillMode);
+										}
+
+										if (settings['in'] < settings.time) {
+											throw Error("The 'in' option can't preceed the 'time' option");
+										}
+
+										if (settings['in'] > settings.out) {
+											throw Error("The 'in' option can't be after the 'out' option");
+										}
+
+										if (settings.out < settings.time || settings.out < settings['in']) {
+											throw Error("The 'out' option can't preceed the 'time' or 'in' option");
+										}
 									}
 								}, {
 									key: '_removeChild',
@@ -39847,7 +39923,7 @@
 							var _timelineAbstract2 = _interopRequireDefault(_timelineAbstract);
 
 							var Tween = (function () {
-								function Tween(name) {
+								function Tween(name, keyframesObject) {
 									_classCallCheck(this, Tween);
 
 									this._propertyKeyframesMap = null;
@@ -39856,6 +39932,10 @@
 									this._duration = 0;
 
 									this._init(name);
+
+									if (keyframesObject != null) {
+										this._addKeyframes(keyframesObject);
+									}
 								}
 
 								/*________________________________________________________
@@ -41705,80 +41785,61 @@
 
 	var _timeline = __webpack_require__(75);
 
-	var ringKyframes = {
+	var ringTween = new _timeline.Tween("ring", {
 		radius: [{
-			value: 70,
-			time: 0
+			value: 70, time: 0
 		}, {
-			value: 19,
-			time: 200
+			value: 19, time: 200
 		}],
 		alpha: [{
-			value: 0,
-			time: 30
+			value: 0, time: 0
 		}, {
-			value: 1,
-			time: 100
+			value: 0, time: 30
+		}, {
+			value: 1, time: 100
 		}],
 		width: [{
-			value: 6,
-			time: 0
+			value: 6, time: 0
 		}, {
-			value: 2,
-			time: 200
+			value: 2, time: 200
 		}]
-	};
-	var ringTween = new _timeline.Tween("ring");
-	ringTween.addKeyframes(ringKyframes);
+	});
 
-	var rippleKyframes = {
+	var rippleTween = new _timeline.Tween("ripple", {
 		radius: [{
-			value: 19,
-			time: 0
+			value: 19, time: 0
 		}, {
-			value: 50,
-			time: 300
+			value: 50, time: 300
 		}],
 		alpha: [{
-			value: 1,
-			time: 0
+			value: 1, time: 0
 		}, {
-			value: 0,
-			time: 300
+			value: 0, time: 300
 		}]
-	};
+	});
 
-	var rippleTween = new _timeline.Tween("ripple");
-	rippleTween.addKeyframes(rippleKyframes);
-
-	var ripple3Kyframes = {
+	var ripple3Tween = new _timeline.Tween("ripple3", {
 		radius: [{
-			value: 19,
-			time: 0,
+			value: 19, time: 0,
 			animatorType: _timeline.MotionTween.animatorType.ease,
 			animatorOptions: {
 				easingFunction: _timeline.MotionTween.easingFunction.easeOutExpo
 			}
 		}, {
-			value: 42,
-			time: 400
+			value: 42, time: 400
 		}],
 		alpha: [{
-			value: 1,
-			time: 0,
+			value: 1, time: 0,
 			animatorType: _timeline.MotionTween.animatorType.ease,
 			animatorOptions: {
 				easingFunction: _timeline.MotionTween.easingFunction.easeOutExpo
 			}
 		}, {
-			value: 0.2,
-			time: 400
+			value: 0.2, time: 400
 		}]
-	};
-	var ripple3Tween = new _timeline.Tween("ripple3");
-	ripple3Tween.addKeyframes(ripple3Kyframes);
+	});
 
-	var ripple4Kyframes = {
+	var ripple4Tween = new _timeline.Tween("ripple4", {
 		radius: [{
 			value: 19,
 			time: 0,
@@ -41787,8 +41848,7 @@
 				easingFunction: _timeline.MotionTween.easingFunction.easeOutExpo
 			}
 		}, {
-			value: 28,
-			time: 288
+			value: 28, time: 288
 		}],
 		alpha: [{
 			value: 1,
@@ -41798,41 +41858,32 @@
 				easingFunction: _timeline.MotionTween.easingFunction.easeOutExpo
 			}
 		}, {
-			value: 0.4,
-			time: 288
+			value: 0.4, time: 288
 		}]
-	};
-	var ripple4Tween = new _timeline.Tween("ripple4");
-	ripple4Tween.addKeyframes(ripple4Kyframes);
+	});
 
-	var plusKyframes = {
+	var plusTween = new _timeline.Tween("plus", {
 		width: [{
-			value: 0,
-			time: 510
+			value: 0, time: 510
 		}, {
-			value: 20,
-			time: 830
+			value: 20, time: 830
 		}]
-	};
-	var plusTween = new _timeline.Tween("plus");
-	plusTween.addKeyframes(plusKyframes);
+	});
 
-	var it = new _timeline.InteractiveTimeline("hotspot");
+	var hotspotTimeline = new _timeline.InteractiveTimeline("hotspot");
 
-	it.addChild(ringTween, { loop: false, fillMode: _timeline.Timeline.FILL_MODE.FORWARD });
-	it.addChild(rippleTween, { time: 130, loop: false, fillMode: _timeline.Timeline.FILL_MODE.NONE });
-	it.addChild(rippleTween, { time: 260, loop: false, fillMode: _timeline.Timeline.FILL_MODE.NONE });
-	it.addChild(ripple3Tween, { time: 390, loop: false, fillMode: _timeline.Timeline.FILL_MODE.FORWARD });
-	it.addChild(ripple4Tween, { time: 520, loop: false, fillMode: _timeline.Timeline.FILL_MODE.FORWARD });
-	it.addChild(plusTween, { loop: false, fillMode: _timeline.Timeline.FILL_MODE.FORWARD });
-	it.setSequences([{
-		time: 0,
-		duration: 830,
-		label: "intro",
-		next: "intro"
+	hotspotTimeline.addChild(ringTween, { fillMode: _timeline.Timeline.FILL_MODE.FORWARD });
+	hotspotTimeline.addChild(rippleTween, { time: 130, fillMode: _timeline.Timeline.FILL_MODE.NONE });
+	hotspotTimeline.addChild(rippleTween, { time: 260, fillMode: _timeline.Timeline.FILL_MODE.FORWARD });
+	hotspotTimeline.addChild(ripple3Tween, { time: 390, fillMode: _timeline.Timeline.FILL_MODE.FORWARD });
+	hotspotTimeline.addChild(ripple4Tween, { time: 520, fillMode: _timeline.Timeline.FILL_MODE.FORWARD });
+	hotspotTimeline.addChild(plusTween, { fillMode: _timeline.Timeline.FILL_MODE.FORWARD });
+
+	hotspotTimeline.setSequences([{
+		time: 0, duration: 830, label: "intro", next: "intro"
 	}]);
 
-	var timeline = it;
+	var timeline = hotspotTimeline;
 	exports.timeline = timeline;
 
 /***/ }
