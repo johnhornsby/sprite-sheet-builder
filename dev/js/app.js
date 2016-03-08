@@ -41903,21 +41903,21 @@
 
 	var ringTween = new _timeline.Tween("ring", {
 		radius: [{
-			value: 70, time: 0
+			time: 0, value: 70
 		}, {
-			value: 19, time: 200
+			time: 200, value: 19
 		}],
 		alpha: [{
-			value: 0, time: 0
+			time: 0, value: 0
 		}, {
-			value: 0, time: 30
+			time: 30, value: 0
 		}, {
-			value: 1, time: 100
+			time: 100, value: 1
 		}],
 		width: [{
-			value: 6, time: 0
+			time: 0, value: 6
 		}, {
-			value: 2, time: 200
+			time: 200, value: 2
 		}]
 	});
 
@@ -41934,89 +41934,45 @@
 		}]
 	});
 
-	var ripple3Tween = new _timeline.Tween("ripple3", {
-		radius: [{
-			value: 19, time: 0,
-			animatorType: _timeline.MotionTween.animatorType.ease,
-			animatorOptions: {
-				easingFunction: _timeline.MotionTween.easingFunction.easeOutExpo
-			}
-		}, {
-			value: 42, time: 400
-		}],
-		alpha: [{
-			value: 1, time: 0,
-			animatorType: _timeline.MotionTween.animatorType.ease,
-			animatorOptions: {
-				easingFunction: _timeline.MotionTween.easingFunction.easeOutExpo
-			}
-		}, {
-			value: 0.2, time: 400
-		}]
-	});
-
-	var ripple4Tween = new _timeline.Tween("ripple4", {
-		radius: [{
-			value: 19,
-			time: 0,
-			animatorType: _timeline.MotionTween.animatorType.ease,
-			animatorOptions: {
-				easingFunction: _timeline.MotionTween.easingFunction.easeOutExpo
-			}
-		}, {
-			value: 28, time: 288
-		}],
-		alpha: [{
-			value: 1,
-			time: 0,
-			animatorType: _timeline.MotionTween.animatorType.ease,
-			animatorOptions: {
-				easingFunction: _timeline.MotionTween.easingFunction.easeOutExpo
-			}
-		}, {
-			value: 0.4, time: 288
-		}]
-	});
-
 	var plusTween = new _timeline.Tween("plus", {
 		width: [{
-			value: 0, time: 510
+			time: 0, value: 0
 		}, {
-			value: 20, time: 830
+			time: 300, value: 20
+		}]
+	});
+
+	var rippleTimeline = new _timeline.InteractiveTimeline("ripples");
+
+	rippleTimeline.addChild(rippleTween, { fillMode: _timeline.Timeline.FILL_MODE.FORWARD, loop: true });
+	rippleTimeline.addChild(rippleTween, { fillMode: _timeline.Timeline.FILL_MODE.FORWARD, loop: true, time: 100 });
+	rippleTimeline.addChild(rippleTween, { fillMode: _timeline.Timeline.FILL_MODE.FORWARD, loop: true, time: 200 });
+
+	var ripplesTimeline = new _timeline.InteractiveTimeline("ripples");
+	ripplesTimeline.addChild(rippleTimeline, { fillMode: _timeline.Timeline.FILL_MODE.FORWARD, out: 800 });
+	ripplesTimeline.addKeyframes({
+		timeRemap: [{
+			time: 0, value: 0
+		}, {
+			time: 375, value: 375
+		}, {
+			time: 800,
+			value: 410,
+			animatorType: _timeline.MotionTween.animatorType.ease,
+			animatorOptions: {
+				easingFunction: _timeline.MotionTween.easingFunction.easeOutExpo
+			}
 		}]
 	});
 
 	var hotspotTimeline = new _timeline.InteractiveTimeline("hotspot");
-	// hotspotTimeline.addKeyframes({
-	// 	timeRemap: [
-	// 		{
-	// 			time: 0,
-	// 			value: 0
-	// 		},
-	// 		{
-	// 			time: 5000,
-	// 			value: 830
-	// 		}
-	// 	]
-	// });
 
-	var rippleTimeline = new _timeline.InteractiveTimeline("ripples");
-
-	rippleTimeline.addChild(rippleTween, { fillMode: _timeline.Timeline.FILL_MODE.FORWARD, loop: true, out: 300 });
-
-	rippleTimeline.getState(350);
-
-	// hotspotTimeline.addChild(ringTween, { fillMode: Timeline.FILL_MODE.FORWARD });
-	// hotspotTimeline.addChild(rippleTween, { time: 130, fillMode: Timeline.FILL_MODE.NONE });
-	// hotspotTimeline.addChild(rippleTween, { time: 260, fillMode: Timeline.FILL_MODE.FORWARD });
-	// hotspotTimeline.addChild(ripple3Tween, { time: 390, fillMode: Timeline.FILL_MODE.FORWARD });
-	// hotspotTimeline.addChild(ripple4Tween, { time: 520, fillMode: Timeline.FILL_MODE.FORWARD });
-	// hotspotTimeline.addChild(plusTween, { fillMode: Timeline.FILL_MODE.FORWARD });
-
-	hotspotTimeline.addChild(rippleTimeline, { fillMode: _timeline.Timeline.FILL_MODE.FORWARD, loop: true, out: 600 });
+	hotspotTimeline.addChild(ringTween, { time: 0, fillMode: _timeline.Timeline.FILL_MODE.FORWARD });
+	hotspotTimeline.addChild(ripplesTimeline, { time: 200, fillMode: _timeline.Timeline.FILL_MODE.FORWARD });
+	hotspotTimeline.addChild(plusTween, { time: 500, fillMode: _timeline.Timeline.FILL_MODE.FORWARD });
 
 	hotspotTimeline.setSequences([{
-		time: 0, duration: 5000, label: "intro", next: "intro"
+		time: 0, duration: 1000, label: "intro", next: null
 	}]);
 
 	var timeline = hotspotTimeline;
