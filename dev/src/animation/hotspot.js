@@ -35,18 +35,18 @@ const ringTween = new Tween("ring", {
 const rippleTween = new Tween("ripple", {
 	radius: [
 		{
-			value: 19, time: 0
+			time: 0, value: 19
 		},
 		{
-			value: 50, time: 300
+			time: 300, value: 50
 		}
 	],
 	alpha: [
 		{
-			value: 1, time: 0
+			time: 0, value: 1
 		},
 		{
-			value: 0, time: 300
+			time: 300, value: 0
 		}
 	]
 });
@@ -122,24 +122,25 @@ const plusTween = new Tween("plus", {
 });
 
 
-const hotspotTimeline = new InteractiveTimeline("hotspot", {
-	timeRemap: [
-		{
-			time: 0,
-			value: 0
-		},
-		{
-			time: 5000,
-			value: 830
-		}
-	]
-});
+const hotspotTimeline = new InteractiveTimeline("hotspot");
+// hotspotTimeline.addKeyframes({
+// 	timeRemap: [
+// 		{
+// 			time: 0,
+// 			value: 0
+// 		},
+// 		{
+// 			time: 5000,
+// 			value: 830
+// 		}
+// 	]
+// });
 
-const rippleTimeline = new Timeline("ripples");
+const rippleTimeline = new InteractiveTimeline("ripples");
 
-rippleTimeline.addChild(rippleTween, {fillMode: Timeline.FILL_MODE.FORWARD, loop: true});
+rippleTimeline.addChild(rippleTween, {fillMode: Timeline.FILL_MODE.FORWARD, loop: true, out: 300 });
 
-
+rippleTimeline.getState(350);
 
 // hotspotTimeline.addChild(ringTween, { fillMode: Timeline.FILL_MODE.FORWARD });
 // hotspotTimeline.addChild(rippleTween, { time: 130, fillMode: Timeline.FILL_MODE.NONE });
@@ -148,7 +149,7 @@ rippleTimeline.addChild(rippleTween, {fillMode: Timeline.FILL_MODE.FORWARD, loop
 // hotspotTimeline.addChild(ripple4Tween, { time: 520, fillMode: Timeline.FILL_MODE.FORWARD });
 // hotspotTimeline.addChild(plusTween, { fillMode: Timeline.FILL_MODE.FORWARD });
 
-hotspotTimeline.addChild(rippleTimeline);
+hotspotTimeline.addChild(rippleTimeline, {fillMode: Timeline.FILL_MODE.FORWARD, loop: true, out: 600 });
 
 
 hotspotTimeline.setSequences([

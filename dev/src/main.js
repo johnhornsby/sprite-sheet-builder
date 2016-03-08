@@ -49,7 +49,8 @@ class Main {
 			identifier: "ring",
 			fps: 60,
 			draw: (ctx, timelineState) => {
-				this._draw(ctx, timelineState);
+				// this._draw(ctx, timelineState);
+				this._stateTreeExplorer(timelineState, ctx)
 			}
 		}
 		spriteSheetBuilder.build(options);
@@ -115,132 +116,61 @@ class Main {
 	}
 
 
-	_draw(ctx, state) {
-		let radius;
-		let alpha;
-		let width;
+	_stateTreeExplorer(timelineState, ctx) {
 
-		// @TODO match drawing methods with the tweens no matter their depth
+		switch(timelineState.name) {
 
-		for (let i = 0; i < state.children.length; i ++) {
-			switch(state.children[i].name) {
+			case "ripple":
+				this._drawRipple(timelineState, ctx);
+				break;
 
-				case "ripple":
-					radius = state.children[i].properties.radius;
-					alpha = state.children[i].properties.alpha;
+			case "ring":
+				this._drawRing(timelineState, ctx);
+				break;
 
-					ctx.beginPath();
-					ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
-					ctx.lineWidth = 1;
-					ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
-					ctx.stroke();
-					break;
-
-				case "ripple3":
-					radius = state.children[i].properties.radius;
-					alpha = state.children[i].properties.alpha;
-
-					ctx.beginPath();
-					ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
-					ctx.lineWidth = 1;
-					ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
-					ctx.stroke();
-					break;
-
-				case "ripple4":
-					radius = state.children[i].properties.radius;
-					alpha = state.children[i].properties.alpha;
-
-					ctx.beginPath();
-					ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
-					ctx.lineWidth = 1;
-					ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
-					ctx.stroke();
-					break;
-
-				case "ring":
-					radius = state.children[i].properties.radius;
-					alpha = state.children[i].properties.alpha;
-					width = state.children[i].properties.width;
-
-					ctx.beginPath();
-					ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
-					ctx.lineWidth = width;
-					ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
-					ctx.stroke();
-					break;
-
-				case "plus":
-					width = state.children[i].properties.width;
-
-					ctx.fillStyle = "white";
-					ctx.fillRect((this._frameWidth - width) / 2, this._frameHeight / 2, width, 1);
-					ctx.fillRect(this._frameWidth / 2, (this._frameHeight - width) / 2, 1, width);
-					break;
-
-
-			}
+			case "plus":
+				this._drawPlus(timelineState, ctx);
+				break;
 		}
 
-	
-		// radius = state.get("ripple").radius;
-		// alpha = state.get("ripple").alpha;
-
-		// ctx.beginPath();
-		// ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
-		// ctx.lineWidth = 1;
-		// ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
-		// ctx.stroke();
-
-		// if (state.get("ripple2")) {
-		// 	radius = state.get("ripple2").radius;
-		// 	alpha = state.get("ripple2").alpha;
-
-		// 	ctx.beginPath();
-		// 	ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
-		// 	ctx.lineWidth = 1;
-		// 	ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
-		// 	ctx.stroke();
-		// }
-		
-
-		// radius = state.get("ripple3").radius;
-		// alpha = state.get("ripple3").alpha;
-
-		// ctx.beginPath();
-		// ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
-		// ctx.lineWidth = 1;
-		// ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
-		// ctx.stroke();
-
-		// radius = state.get("ripple4").radius;
-		// alpha = state.get("ripple4").alpha;
-
-		// ctx.beginPath();
-		// ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
-		// ctx.lineWidth = 1;
-		// ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
-		// ctx.stroke();
-
-
-		// radius = state.get("ring").radius;
-		// alpha = state.get("ring").alpha;
-		// width = state.get("ring").width;
-
-		// ctx.beginPath();
-		// ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
-		// ctx.lineWidth = width;
-		// ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
-		// ctx.stroke();
-
-		// width = state.get("plus").width;
-
-		// ctx.fillStyle = "white";
-		// ctx.fillRect((this._frameWidth - width) / 2, this._frameHeight / 2, width, 1);
-		// ctx.fillRect(this._frameWidth / 2, (this._frameHeight - width) / 2, 1, width);
-
+		for (let prop in timelineState.children) {
+			this._stateTreeExplorer(timelineState.children[prop], ctx);
+		}
 	}
 
+
+	_drawRipple(timelineState, ctx) {
+		const radius = timelineState.properties.radius;
+		const alpha = timelineState.properties.alpha;
+
+		ctx.beginPath();
+		ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+		ctx.lineWidth = 1;
+		ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
+		ctx.stroke();
+	}
+
+
+	_drawRing(timelineState, ctx) {
+		const radius = timelineState.properties.radius;
+		const alpha = timelineState.properties.alpha;
+		const width = timelineState.properties.width;
+
+		ctx.beginPath();
+		ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+		ctx.lineWidth = width;
+		ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
+		ctx.stroke();
+	}
+
+
+	_drawPlus(timelineState, ctx) {
+		const width = timelineState.properties.width;
+
+		ctx.fillStyle = "white";
+		ctx.fillRect((this._frameWidth - width) / 2, this._frameHeight / 2, width, 1);
+		ctx.fillRect(this._frameWidth / 2, (this._frameHeight - width) / 2, 1, width);
+	}
 
 
 	_parseJSON(json, baseTexture) {

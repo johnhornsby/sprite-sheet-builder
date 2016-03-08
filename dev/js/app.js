@@ -7461,7 +7461,8 @@
 					identifier: "ring",
 					fps: 60,
 					draw: function draw(ctx, timelineState) {
-						_this._draw(ctx, timelineState);
+						// this._draw(ctx, timelineState);
+						_this._stateTreeExplorer(timelineState, ctx);
 					}
 				};
 				spriteSheetBuilder.build(options);
@@ -7523,126 +7524,61 @@
 				this._timeline = _animationHotspot.timeline;
 			}
 		}, {
-			key: "_draw",
-			value: function _draw(ctx, state) {
-				var radius = undefined;
-				var alpha = undefined;
-				var width = undefined;
+			key: "_stateTreeExplorer",
+			value: function _stateTreeExplorer(timelineState, ctx) {
 
-				// @TODO match drawing methods with the tweens no matter their depth
+				switch (timelineState.name) {
 
-				for (var i = 0; i < state.children.length; i++) {
-					switch (state.children[i].name) {
+					case "ripple":
+						this._drawRipple(timelineState, ctx);
+						break;
 
-						case "ripple":
-							radius = state.children[i].properties.radius;
-							alpha = state.children[i].properties.alpha;
+					case "ring":
+						this._drawRing(timelineState, ctx);
+						break;
 
-							ctx.beginPath();
-							ctx.strokeStyle = "rgba(255,255,255," + alpha + ")";
-							ctx.lineWidth = 1;
-							ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
-							ctx.stroke();
-							break;
-
-						case "ripple3":
-							radius = state.children[i].properties.radius;
-							alpha = state.children[i].properties.alpha;
-
-							ctx.beginPath();
-							ctx.strokeStyle = "rgba(255,255,255," + alpha + ")";
-							ctx.lineWidth = 1;
-							ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
-							ctx.stroke();
-							break;
-
-						case "ripple4":
-							radius = state.children[i].properties.radius;
-							alpha = state.children[i].properties.alpha;
-
-							ctx.beginPath();
-							ctx.strokeStyle = "rgba(255,255,255," + alpha + ")";
-							ctx.lineWidth = 1;
-							ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
-							ctx.stroke();
-							break;
-
-						case "ring":
-							radius = state.children[i].properties.radius;
-							alpha = state.children[i].properties.alpha;
-							width = state.children[i].properties.width;
-
-							ctx.beginPath();
-							ctx.strokeStyle = "rgba(255,255,255," + alpha + ")";
-							ctx.lineWidth = width;
-							ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
-							ctx.stroke();
-							break;
-
-						case "plus":
-							width = state.children[i].properties.width;
-
-							ctx.fillStyle = "white";
-							ctx.fillRect((this._frameWidth - width) / 2, this._frameHeight / 2, width, 1);
-							ctx.fillRect(this._frameWidth / 2, (this._frameHeight - width) / 2, 1, width);
-							break;
-
-					}
+					case "plus":
+						this._drawPlus(timelineState, ctx);
+						break;
 				}
 
-				// radius = state.get("ripple").radius;
-				// alpha = state.get("ripple").alpha;
+				for (var prop in timelineState.children) {
+					this._stateTreeExplorer(timelineState.children[prop], ctx);
+				}
+			}
+		}, {
+			key: "_drawRipple",
+			value: function _drawRipple(timelineState, ctx) {
+				var radius = timelineState.properties.radius;
+				var alpha = timelineState.properties.alpha;
 
-				// ctx.beginPath();
-				// ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
-				// ctx.lineWidth = 1;
-				// ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
-				// ctx.stroke();
+				ctx.beginPath();
+				ctx.strokeStyle = "rgba(255,255,255," + alpha + ")";
+				ctx.lineWidth = 1;
+				ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
+				ctx.stroke();
+			}
+		}, {
+			key: "_drawRing",
+			value: function _drawRing(timelineState, ctx) {
+				var radius = timelineState.properties.radius;
+				var alpha = timelineState.properties.alpha;
+				var width = timelineState.properties.width;
 
-				// if (state.get("ripple2")) {
-				// 	radius = state.get("ripple2").radius;
-				// 	alpha = state.get("ripple2").alpha;
+				ctx.beginPath();
+				ctx.strokeStyle = "rgba(255,255,255," + alpha + ")";
+				ctx.lineWidth = width;
+				ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
+				ctx.stroke();
+			}
+		}, {
+			key: "_drawPlus",
+			value: function _drawPlus(timelineState, ctx) {
+				var width = timelineState.properties.width;
 
-				// 	ctx.beginPath();
-				// 	ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
-				// 	ctx.lineWidth = 1;
-				// 	ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
-				// 	ctx.stroke();
-				// }
-
-				// radius = state.get("ripple3").radius;
-				// alpha = state.get("ripple3").alpha;
-
-				// ctx.beginPath();
-				// ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
-				// ctx.lineWidth = 1;
-				// ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
-				// ctx.stroke();
-
-				// radius = state.get("ripple4").radius;
-				// alpha = state.get("ripple4").alpha;
-
-				// ctx.beginPath();
-				// ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
-				// ctx.lineWidth = 1;
-				// ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
-				// ctx.stroke();
-
-				// radius = state.get("ring").radius;
-				// alpha = state.get("ring").alpha;
-				// width = state.get("ring").width;
-
-				// ctx.beginPath();
-				// ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
-				// ctx.lineWidth = width;
-				// ctx.arc(this._frameWidth / 2, this._frameHeight / 2, radius, 0, 2 * Math.PI);
-				// ctx.stroke();
-
-				// width = state.get("plus").width;
-
-				// ctx.fillStyle = "white";
-				// ctx.fillRect((this._frameWidth - width) / 2, this._frameHeight / 2, width, 1);
-				// ctx.fillRect(this._frameWidth / 2, (this._frameHeight - width) / 2, 1, width);
+				ctx.fillStyle = "white";
+				ctx.fillRect((this._frameWidth - width) / 2, this._frameHeight / 2, width, 1);
+				ctx.fillRect(this._frameWidth / 2, (this._frameHeight - width) / 2, 1, width);
 			}
 		}, {
 			key: "_parseJSON",
@@ -41987,14 +41923,14 @@
 
 	var rippleTween = new _timeline.Tween("ripple", {
 		radius: [{
-			value: 19, time: 0
+			time: 0, value: 19
 		}, {
-			value: 50, time: 300
+			time: 300, value: 50
 		}],
 		alpha: [{
-			value: 1, time: 0
+			time: 0, value: 1
 		}, {
-			value: 0, time: 300
+			time: 300, value: 0
 		}]
 	});
 
@@ -42050,19 +41986,25 @@
 		}]
 	});
 
-	var hotspotTimeline = new _timeline.InteractiveTimeline("hotspot", {
-		timeRemap: [{
-			time: 0,
-			value: 0
-		}, {
-			time: 5000,
-			value: 830
-		}]
-	});
+	var hotspotTimeline = new _timeline.InteractiveTimeline("hotspot");
+	// hotspotTimeline.addKeyframes({
+	// 	timeRemap: [
+	// 		{
+	// 			time: 0,
+	// 			value: 0
+	// 		},
+	// 		{
+	// 			time: 5000,
+	// 			value: 830
+	// 		}
+	// 	]
+	// });
 
-	var rippleTimeline = new _timeline.Timeline("ripples");
+	var rippleTimeline = new _timeline.InteractiveTimeline("ripples");
 
-	rippleTimeline.addChild(rippleTween, { fillMode: _timeline.Timeline.FILL_MODE.FORWARD, loop: true });
+	rippleTimeline.addChild(rippleTween, { fillMode: _timeline.Timeline.FILL_MODE.FORWARD, loop: true, out: 300 });
+
+	rippleTimeline.getState(350);
 
 	// hotspotTimeline.addChild(ringTween, { fillMode: Timeline.FILL_MODE.FORWARD });
 	// hotspotTimeline.addChild(rippleTween, { time: 130, fillMode: Timeline.FILL_MODE.NONE });
@@ -42071,7 +42013,7 @@
 	// hotspotTimeline.addChild(ripple4Tween, { time: 520, fillMode: Timeline.FILL_MODE.FORWARD });
 	// hotspotTimeline.addChild(plusTween, { fillMode: Timeline.FILL_MODE.FORWARD });
 
-	hotspotTimeline.addChild(rippleTimeline);
+	hotspotTimeline.addChild(rippleTimeline, { fillMode: _timeline.Timeline.FILL_MODE.FORWARD, loop: true, out: 600 });
 
 	hotspotTimeline.setSequences([{
 		time: 0, duration: 5000, label: "intro", next: "intro"
