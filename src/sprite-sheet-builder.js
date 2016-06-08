@@ -105,6 +105,7 @@ class SpriteSheetBuilder {
 
 
 	_initiateMetrics() {
+		// frameLength will always equal or less timelime
 		this._frameLength = Math.floor(this._options.timeline.duration / (1000 / this._options.fps));
 
 		this._sheetData = this._determinMinimumSheetSize(this._frameLength);
@@ -155,7 +156,7 @@ class SpriteSheetBuilder {
 		tween.addKeyframes(propertyKeyframes);
 
 		this._sheetTimeline = new InteractiveTimeline("sprite-sheet-timeline");
-		this._sheetTimeline.addChild(tween, { loop: false, fillMode: "none" });
+		this._sheetTimeline.addChild(tween, { loop: false, fillMode: "both" });
 
 		const sequences = this._options.timeline.getSequences();
 		if (sequences.length > 0) {

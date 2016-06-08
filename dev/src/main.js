@@ -66,10 +66,7 @@ class Main {
 			texture = new PIXI.Texture(baseTexture);
 			PIXI.Texture.addTextureToCache(texture, `animation-${i}`);
 		}
-
-		
-
-
+	
 		// Parse SpriteSheet data to cache textures
 		// this._parseJSON(spriteSheetBuilder.getSpriteSheetJSONData()[0].frames, baseTexture);
 
