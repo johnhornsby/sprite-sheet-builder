@@ -73,6 +73,7 @@ rippleTimeline.addChild(rippleTween, {fillMode: Timeline.FILL_MODE.FORWARD, loop
 
 const ripplesTimeline = new InteractiveTimeline("ripples");
 ripplesTimeline.addChild(rippleTimeline, {fillMode: Timeline.FILL_MODE.FORWARD, out: 800 });
+
 ripplesTimeline.addKeyframes({
 	timeRemap: [
 		{

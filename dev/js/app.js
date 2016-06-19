@@ -1640,7 +1640,7 @@
 	  debug = __webpack_require__(20)('sockjs-client:websocket');
 	}
 
-	function WebSocketTransport(transUrl) {
+	function WebSocketTransport(transUrl, ignore, options) {
 	  if (!WebSocketTransport.enabled()) {
 	    throw new Error('Transport created when disabled');
 	  }
@@ -1657,7 +1657,7 @@
 	  }
 	  this.url = url;
 
-	  this.ws = new WebsocketDriver(this.url);
+	  this.ws = new WebsocketDriver(this.url, [], options);
 	  this.ws.onmessage = function(e) {
 	    debug('message event', e.data);
 	    self.emit('message', e.data);
@@ -1734,12 +1734,40 @@
 	// shim for using process in browser
 
 	var process = module.exports = {};
+
+	// cached from whatever global is present so that test runners that stub it
+	// don't break things.  But we need to wrap it in a try catch in case it is
+	// wrapped in strict mode code which doesn't define any globals.  It's inside a
+	// function because try/catches deoptimize in certain engines.
+
+	var cachedSetTimeout;
+	var cachedClearTimeout;
+
+	(function () {
+	  try {
+	    cachedSetTimeout = setTimeout;
+	  } catch (e) {
+	    cachedSetTimeout = function () {
+	      throw new Error('setTimeout is not defined');
+	    }
+	  }
+	  try {
+	    cachedClearTimeout = clearTimeout;
+	  } catch (e) {
+	    cachedClearTimeout = function () {
+	      throw new Error('clearTimeout is not defined');
+	    }
+	  }
+	} ())
 	var queue = [];
 	var draining = false;
 	var currentQueue;
 	var queueIndex = -1;
 
 	function cleanUpNextTick() {
+	    if (!draining || !currentQueue) {
+	        return;
+	    }
 	    draining = false;
 	    if (currentQueue.length) {
 	        queue = currentQueue.concat(queue);
@@ -1755,7 +1783,7 @@
 	    if (draining) {
 	        return;
 	    }
-	    var timeout = setTimeout(cleanUpNextTick);
+	    var timeout = cachedSetTimeout(cleanUpNextTick);
 	    draining = true;
 
 	    var len = queue.length;
@@ -1772,7 +1800,7 @@
 	    }
 	    currentQueue = null;
 	    draining = false;
-	    clearTimeout(timeout);
+	    cachedClearTimeout(timeout);
 	}
 
 	process.nextTick = function (fun) {
@@ -1784,7 +1812,7 @@
 	    }
 	    queue.push(new Item(fun, args));
 	    if (queue.length === 1 && !draining) {
-	        setTimeout(drainQueue, 0);
+	        cachedSetTimeout(drainQueue, 0);
 	    }
 	};
 
@@ -2026,7 +2054,8 @@
 	var required = __webpack_require__(17)
 	  , lolcation = __webpack_require__(18)
 	  , qs = __webpack_require__(19)
-	  , relativere = /^\/(?!\/)/;
+	  , relativere = /^\/(?!\/)/
+	  , protocolre = /^([a-z0-9.+-]+:)?(\/\/)?(.*)$/i; // actual protocol is first match
 
 	/**
 	 * These are the parse instructions for the URL parsers, it informs the parser
@@ -2043,13 +2072,36 @@
 	var instructions = [
 	  ['#', 'hash'],                        // Extract from the back.
 	  ['?', 'query'],                       // Extract from the back.
-	  ['//', 'protocol', 2, 1, 1],          // Extract from the front.
 	  ['/', 'pathname'],                    // Extract from the back.
 	  ['@', 'auth', 1],                     // Extract from the front.
 	  [NaN, 'host', undefined, 1, 1],       // Set left over value.
 	  [/\:(\d+)$/, 'port'],                 // RegExp the back.
 	  [NaN, 'hostname', undefined, 1, 1]    // Set left over.
 	];
+
+	 /**
+	 * @typedef ProtocolExtract
+	 * @type Object
+	 * @property {String} protocol Protocol matched in the URL, in lowercase
+	 * @property {Boolean} slashes Indicates whether the protocol is followed by double slash ("//")
+	 * @property {String} rest     Rest of the URL that is not part of the protocol
+	 */
+
+	 /**
+	  * Extract protocol information from a URL with/without double slash ("//")
+	  *
+	  * @param  {String} address   URL we want to extract from.
+	  * @return {ProtocolExtract}  Extracted information
+	  * @private
+	  */
+	function extractProtocol(address) {
+	  var match = protocolre.exec(address);
+	  return {
+	    protocol: match[1] ? match[1].toLowerCase() : '',
+	    slashes: !!match[2],
+	    rest: match[3] ? match[3] : ''
+	  };
+	}
 
 	/**
 	 * The actual URL instance. Instead of returning an object we've opted-in to
@@ -2058,8 +2110,8 @@
 	 *
 	 * @constructor
 	 * @param {String} address URL we want to parse.
-	 * @param {Boolean|function} parser Parser for the query string.
-	 * @param {Object} location Location defaults for relative paths.
+	 * @param {Object|String} location Location defaults for relative paths.
+	 * @param {Boolean|Function} parser Parser for the query string.
 	 * @api public
 	 */
 	function URL(address, location, parser) {
@@ -2094,6 +2146,12 @@
 	  }
 
 	  location = lolcation(location);
+
+	  // extract protocol information before running the instructions
+	  var extracted = extractProtocol(address);
+	  url.protocol = extracted.protocol || location.protocol || '';
+	  url.slashes = extracted.slashes || location.slashes;
+	  address = extracted.rest;
 
 	  for (; i < instructions.length; i++) {
 	    instruction = instructions[i];
@@ -2165,8 +2223,12 @@
 	 * This is convenience method for changing properties in the URL instance to
 	 * insure that they all propagate correctly.
 	 *
-	 * @param {String} prop Property we need to adjust.
-	 * @param {Mixed} value The newly assigned value.
+	 * @param {String} prop          Property we need to adjust.
+	 * @param {Mixed} value          The newly assigned value.
+	 * @param {Boolean|Function} fn  When setting the query, it will be the function used to parse
+	 *                               the query.
+	 *                               When setting the protocol, double slash will be removed from
+	 *                               the final url if it is true.
 	 * @returns {URL}
 	 * @api public
 	 */
@@ -2201,6 +2263,9 @@
 	      url.hostname = value[0];
 	      url.port = value[1];
 	    }
+	  } else if ('protocol' === part) {
+	    url.protocol = value;
+	    url.slashes = !fn;
 	  } else {
 	    url[part] = value;
 	  }
@@ -2221,7 +2286,11 @@
 
 	  var query
 	    , url = this
-	    , result = url.protocol +'//';
+	    , protocol = url.protocol;
+
+	  if (protocol && protocol.charAt(protocol.length - 1) !== ':') protocol += ':';
+
+	  var result = protocol + (url.slashes ? '//' : '');
 
 	  if (url.username) {
 	    result += url.username;
@@ -2301,9 +2370,11 @@
 
 	/* WEBPACK VAR INJECTION */(function(global) {'use strict';
 
+	var slashes = /^[A-Za-z][A-Za-z0-9+-.]*:\/\//;
+
 	/**
 	 * These properties should not be copied or inherited from. This is only needed
-	 * for all non blob URL's as the a blob URL does not include a hash, only the
+	 * for all non blob URL's as a blob URL does not include a hash, only the
 	 * origin.
 	 *
 	 * @type {Object}
@@ -2320,7 +2391,7 @@
 	 * encoded in the `pathname` so we can thankfully generate a good "default"
 	 * location from it so we can generate proper relative URL's again.
 	 *
-	 * @param {Object} loc Optional default location object.
+	 * @param {Object|String} loc Optional default location object.
 	 * @returns {Object} lolcation object.
 	 * @api public
 	 */
@@ -2337,9 +2408,15 @@
 	  } else if ('string' === type) {
 	    finaldestination = new URL(loc, {});
 	    for (key in ignore) delete finaldestination[key];
-	  } else if ('object' === type) for (key in loc) {
-	    if (key in ignore) continue;
-	    finaldestination[key] = loc[key];
+	  } else if ('object' === type) {
+	    for (key in loc) {
+	      if (key in ignore) continue;
+	      finaldestination[key] = loc[key];
+	    }
+
+	    if (finaldestination.slashes === undefined) {
+	      finaldestination.slashes = slashes.test(loc.href);
+	    }
 	  }
 
 	  return finaldestination;
@@ -2991,12 +3068,18 @@
 	  this.on(type, g);
 	};
 
-	EventEmitter.prototype.emit = function(type) {
+	EventEmitter.prototype.emit = function() {
+	  var type = arguments[0];
 	  var listeners = this._listeners[type];
 	  if (!listeners) {
 	    return;
 	  }
-	  var args = Array.prototype.slice.call(arguments, 1);
+	  // equivalent of Array.prototype.slice.call(arguments, 1);
+	  var l = arguments.length;
+	  var args = new Array(l - 1);
+	  for (var ai = 1; ai < l; ai++) {
+	    args[ai - 1] = arguments[ai];
+	  }
 	  for (var i = 0; i < listeners.length; i++) {
 	    listeners[i].apply(this, args);
 	  }
@@ -3052,9 +3135,11 @@
 	  }
 	};
 
-	EventTarget.prototype.dispatchEvent = function(event) {
+	EventTarget.prototype.dispatchEvent = function() {
+	  var event = arguments[0];
 	  var t = event.type;
-	  var args = Array.prototype.slice.call(arguments, 0);
+	  // equivalent of Array.prototype.slice.call(arguments, 0);
+	  var args = arguments.length === 1 ? [event] : Array.apply(null, arguments);
 	  // TODO: This doesn't match the real behavior; per spec, onfoo get
 	  // their place in line from the /first/ time they're set from
 	  // non-null. Although WebKit bumps it to the end every time it's
@@ -3078,7 +3163,14 @@
 /* 26 */
 /***/ function(module, exports) {
 
-	/* WEBPACK VAR INJECTION */(function(global) {module.exports = global.WebSocket || global.MozWebSocket;
+	/* WEBPACK VAR INJECTION */(function(global) {'use strict';
+
+	var Driver = global.WebSocket || global.MozWebSocket;
+	if (Driver) {
+		module.exports = function WebSocketBrowserDriver(url) {
+			return new Driver(url);
+		};
+	}
 
 	/* WEBPACK VAR INJECTION */}.call(exports, (function() { return this; }())))
 
@@ -3151,7 +3243,7 @@
 	    debug('create ajax sender', url, payload);
 	    var opt = {};
 	    if (typeof payload === 'string') {
-	      opt.headers = {'Content-type':'text/plain'};
+	      opt.headers = {'Content-type': 'text/plain'};
 	    }
 	    var ajaxUrl = urlUtils.addPath(url, '/xhr_send');
 	    var xo = new AjaxObject('POST', ajaxUrl, payload, opt);
@@ -3529,7 +3621,9 @@
 
 	  try {
 	    this.xhr = new XHR();
-	  } catch (x) {}
+	  } catch (x) {
+	    // intentionally empty
+	  }
 
 	  if (!this.xhr) {
 	    debug('no xhr');
@@ -3590,7 +3684,9 @@
 	        try {
 	          status = x.status;
 	          text = x.responseText;
-	        } catch (e) {}
+	        } catch (e) {
+	          // intentionally empty
+	        }
 	        debug('status', status);
 	        // IE returns 1223 for 204: http://bugs.jquery.com/ticket/1450
 	        if (status === 1223) {
@@ -3649,7 +3745,9 @@
 	  if (abort) {
 	    try {
 	      this.xhr.abort();
-	    } catch (x) {}
+	    } catch (x) {
+	      // intentionally empty
+	    }
 	  }
 	  this.unloadRef = this.xhr = null;
 	};
@@ -3678,7 +3776,9 @@
 	var cors = false;
 	try {
 	  cors = 'withCredentials' in new XHR();
-	} catch (ignored) {}
+	} catch (ignored) {
+	  // intentionally empty
+	}
 
 	AbstractXHRObject.supportsCORS = cors;
 
@@ -3872,7 +3972,9 @@
 	  if (abort) {
 	    try {
 	      this.xdr.abort();
-	    } catch (x) {}
+	    } catch (x) {
+	      // intentionally empty
+	    }
 	  }
 	  this.unloadRef = this.xdr = null;
 	};
@@ -4106,7 +4208,9 @@
 	      // When the iframe is not loaded, IE raises an exception
 	      // on 'contentWindow'.
 	      this.postMessage('c');
-	    } catch (x) {}
+	    } catch (x) {
+	      // intentionally empty
+	    }
 	    this.iframeObj.cleanup();
 	    this.iframeObj = null;
 	    this.onmessageCallback = this.iframeObj = null;
@@ -5107,7 +5211,8 @@
 /* 46 */
 /***/ function(module, exports) {
 
-	module.exports = '1.0.3';
+	module.exports = '1.1.1';
+
 
 /***/ },
 /* 47 */
@@ -5156,7 +5261,9 @@
 	      // Explorer had problems with that.
 	      try {
 	        iframe.onload = null;
-	      } catch (x) {}
+	      } catch (x) {
+	        // intentionally empty
+	      }
 	      iframe.onerror = null;
 	    };
 	    var cleanup = function() {
@@ -5192,7 +5299,9 @@
 	            iframe.contentWindow.postMessage(msg, origin);
 	          }
 	        }, 0);
-	      } catch (x) {}
+	      } catch (x) {
+	        // intentionally empty
+	      }
 	    };
 
 	    iframe.src = iframeUrl;
@@ -5242,7 +5351,7 @@
 	        CollectGarbage();
 	      }
 	    };
-	    var onerror = function(r)  {
+	    var onerror = function(r) {
 	      debug('onerror', r);
 	      if (doc) {
 	        cleanup();
@@ -5258,7 +5367,9 @@
 	              iframe.contentWindow.postMessage(msg, origin);
 	          }
 	        }, 0);
-	      } catch (x) {}
+	      } catch (x) {
+	        // intentionally empty
+	      }
 	    };
 
 	    doc.open();
@@ -5441,7 +5552,9 @@
 	if (axo in global) {
 	  try {
 	    HtmlfileReceiver.htmlfileEnabled = !!new global[axo]('htmlfile');
-	  } catch (x) {}
+	  } catch (x) {
+	    // intentionally empty
+	  }
 	}
 
 	HtmlfileReceiver.enabled = HtmlfileReceiver.htmlfileEnabled || iframeUtils.iframeEnabled;
@@ -5695,7 +5808,9 @@
 	        try {
 	          // In IE, actually execute the script.
 	          script.onclick();
-	        } catch (x) {}
+	        } catch (x) {
+	          // intentionally empty
+	        }
 	      }
 	      if (script) {
 	        self._abort(new Error('JSONP script loaded abnormally (onreadystatechange)'));
@@ -5721,7 +5836,9 @@
 	      try {
 	        script.htmlFor = script.id;
 	        script.event = 'onclick';
-	      } catch (x) {}
+	      } catch (x) {
+	        // intentionally empty
+	      }
 	      script.async = true;
 	    } else {
 	      // Opera, second sync script hack
@@ -5880,9 +5997,7 @@
 
 	var debug = function() {};
 	if (process.env.NODE_ENV !== 'production') {
-	  // Make debug module available globally so you can enable via the console easily
-	  global.dbg = __webpack_require__(20);
-	  debug = global.dbg('sockjs-client:main');
+	  debug = __webpack_require__(20)('sockjs-client:main');
 	}
 
 	var transports;
@@ -5907,6 +6022,7 @@
 	    log.warn("'protocols_whitelist' is DEPRECATED. Use 'transports' instead.");
 	  }
 	  this._transportsWhitelist = options.transports;
+	  this._transportOptions = options.transportOptions || {};
 
 	  var sessionId = options.sessionId || 8;
 	  if (typeof sessionId === 'function') {
@@ -5916,7 +6032,7 @@
 	      return random.string(sessionId);
 	    };
 	  } else {
-	    throw new TypeError("If sessionId is used in the options, it needs to be a number or a function.");
+	    throw new TypeError('If sessionId is used in the options, it needs to be a number or a function.');
 	  }
 
 	  this._server = options.server || random.numberString(1000);
@@ -6072,8 +6188,9 @@
 	    debug('using timeout', timeoutMs);
 
 	    var transportUrl = urlUtils.addPath(this._transUrl, '/' + this._server + '/' + this._generateSessionId());
+	    var options = this._transportOptions[Transport.transportName];
 	    debug('transport url', transportUrl);
-	    var transportObj = new Transport(transportUrl, this._transUrl);
+	    var transportObj = new Transport(transportUrl, this._transUrl, options);
 	    transportObj.on('message', this._transportMessage.bind(this));
 	    transportObj.once('close', this._transportClose.bind(this));
 	    transportObj.transportName = Transport.transportName;
@@ -6838,7 +6955,14 @@
 
 	var logObject = {};
 	['log', 'debug', 'warn'].forEach(function (level) {
-	  var levelExists = global.console && global.console[level] && global.console[level].apply;
+	  var levelExists;
+
+	  try {
+	    levelExists = global.console && global.console[level] && global.console[level].apply;
+	  } catch(e) {
+	    // do nothing
+	  }
+
 	  logObject[level] = levelExists ? function () {
 	    return global.console[level].apply(global.console, arguments);
 	  } : (level === 'log' ? function () {} : logObject.log);
@@ -6867,11 +6991,11 @@
 	};
 
 	Event.prototype.stopPropagation = function() {};
-	Event.prototype.preventDefault  = function() {};
+	Event.prototype.preventDefault = function() {};
 
 	Event.CAPTURING_PHASE = 1;
-	Event.AT_TARGET       = 2;
-	Event.BUBBLING_PHASE  = 3;
+	Event.AT_TARGET = 2;
+	Event.BUBBLING_PHASE = 3;
 
 	module.exports = Event;
 
@@ -7310,7 +7434,7 @@
 	        debug(version, transport, transUrl, baseUrl);
 	        // change this to semver logic
 	        if (version !== SockJS.version) {
-	          throw new Error('Incompatibile SockJS! Main site uses:' +
+	          throw new Error('Incompatible SockJS! Main site uses:' +
 	                    ' "' + version + '", the iframe:' +
 	                    ' "' + SockJS.version + '".');
 	        }
@@ -7404,31 +7528,29 @@
 
 	"use strict";
 
-	var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
-
-	function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { "default": obj }; }
-
-	function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+	var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
 
 	var _timeline = __webpack_require__(75);
 
-	var _pixiJsBinPixi = __webpack_require__(76);
+	var _pixi = __webpack_require__(76);
 
-	var _pixiJsBinPixi2 = _interopRequireDefault(_pixiJsBinPixi);
+	var _pixi2 = _interopRequireDefault(_pixi);
 
-	// import SpriteSheetBuilder from "../../dist/sprite-sheet-builder";
+	var _spriteSheetBuilder = __webpack_require__(78);
 
-	var _srcSpriteSheetBuilder = __webpack_require__(78);
+	var _spriteSheetBuilder2 = _interopRequireDefault(_spriteSheetBuilder);
 
-	var _srcSpriteSheetBuilder2 = _interopRequireDefault(_srcSpriteSheetBuilder);
-
-	var _interactiveSprite = __webpack_require__(80);
+	var _interactiveSprite = __webpack_require__(79);
 
 	var _interactiveSprite2 = _interopRequireDefault(_interactiveSprite);
 
-	var _animationHotspot = __webpack_require__(81);
+	var _hotspot = __webpack_require__(80);
 
-	var Main = (function () {
+	function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+	function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+
+	var Main = function () {
 		function Main() {
 			_classCallCheck(this, Main);
 
@@ -7438,6 +7560,7 @@
 			this._renderer = null;
 			this._canvasContainer = null;
 			this._rootContainer = null;
+
 
 			this._init();
 		}
@@ -7455,7 +7578,7 @@
 				this._frameHeight = 128;
 
 				// Create and build a SpriteSheet
-				var spriteSheetBuilder = _srcSpriteSheetBuilder2["default"].instance;
+				var spriteSheetBuilder = _spriteSheetBuilder2.default.instance;
 				var options = {
 					timeline: this._timeline,
 					frameWidth: this._frameWidth,
@@ -7472,14 +7595,14 @@
 				// Use the finished canvas, convert into PIXI texture
 				var cavnasArray = spriteSheetBuilder.getSpriteSheetCanvas();
 
-				var baseTexture = undefined,
-				    texture = undefined,
-				    canvas = undefined;
+				var baseTexture = void 0,
+				    texture = void 0,
+				    canvas = void 0;
 
 				for (var i = 0; i < cavnasArray.length; i++) {
-					baseTexture = _pixiJsBinPixi2["default"].BaseTexture.fromCanvas(spriteSheetBuilder.getSpriteSheetCanvas()[0]);
-					texture = new _pixiJsBinPixi2["default"].Texture(baseTexture);
-					_pixiJsBinPixi2["default"].Texture.addTextureToCache(texture, "animation-" + i);
+					baseTexture = _pixi2.default.BaseTexture.fromCanvas(spriteSheetBuilder.getSpriteSheetCanvas()[0]);
+					texture = new _pixi2.default.Texture(baseTexture);
+					_pixi2.default.Texture.addTextureToCache(texture, "animation-" + i);
 				}
 
 				// Parse SpriteSheet data to cache textures
@@ -7489,16 +7612,16 @@
 				this._render();
 
 				// Create an interactive sprite and feed it the texture and timeline
-				var interactiveSprite = new _interactiveSprite2["default"](texture, spriteSheetBuilder.getSpriteSheetTimeline());
+				var interactiveSprite = new _interactiveSprite2.default(texture, spriteSheetBuilder.getSpriteSheetTimeline());
 				this._rootContainer.addChild(interactiveSprite);
 				interactiveSprite.play();
 
 				// render out the complete sprite sheet so we can see it
-				for (var i = 0; i < cavnasArray.length; i++) {
+				for (var _i = 0; _i < cavnasArray.length; _i++) {
 					canvas = document.createElement('canvas');
-					canvas.width = spriteSheetBuilder.getSpriteSheetCanvas()[i].width;
-					canvas.height = spriteSheetBuilder.getSpriteSheetCanvas()[i].height;
-					canvas.getContext("2d").drawImage(spriteSheetBuilder.getSpriteSheetCanvas()[i], 0, 0);
+					canvas.width = spriteSheetBuilder.getSpriteSheetCanvas()[_i].width;
+					canvas.height = spriteSheetBuilder.getSpriteSheetCanvas()[_i].height;
+					canvas.getContext("2d").drawImage(spriteSheetBuilder.getSpriteSheetCanvas()[_i], 0, 0);
 					document.body.appendChild(canvas);
 				}
 			}
@@ -7509,9 +7632,9 @@
 				this._canvasContainer.width = 128;
 				this._canvasContainer.height = 128;
 				document.body.appendChild(this._canvasContainer);
-				this._renderer = _pixiJsBinPixi2["default"].autoDetectRenderer(128, 128, { antialias: false });
+				this._renderer = _pixi2.default.autoDetectRenderer(128, 128, { antialias: false });
 				this._canvasContainer.appendChild(this._renderer.view);
-				this._rootContainer = new _pixiJsBinPixi2["default"].Container();
+				this._rootContainer = new _pixi2.default.Container();
 			}
 		}, {
 			key: "_render",
@@ -7523,7 +7646,7 @@
 		}, {
 			key: "_createTimeline",
 			value: function _createTimeline() {
-				this._timeline = _animationHotspot.timeline;
+				this._timeline = _hotspot.timeline;
 			}
 		}, {
 			key: "_stateTreeExplorer",
@@ -7596,14 +7719,14 @@
 						var trim = null;
 
 						if (frames[i].rotated) {
-							size = new _pixiJsBinPixi2["default"].Rectangle(rect.x, rect.y, rect.h, rect.w);
+							size = new _pixi2.default.Rectangle(rect.x, rect.y, rect.h, rect.w);
 						} else {
-							size = new _pixiJsBinPixi2["default"].Rectangle(rect.x, rect.y, rect.w, rect.h);
+							size = new _pixi2.default.Rectangle(rect.x, rect.y, rect.w, rect.h);
 						}
 
 						//  Check to see if the sprite is trimmed
 						if (frames[i].trimmed) {
-							trim = new _pixiJsBinPixi2["default"].Rectangle(frames[i].spriteSourceSize.x / resolution, frames[i].spriteSourceSize.y / resolution, frames[i].sourceSize.w / resolution, frames[i].sourceSize.h / resolution);
+							trim = new _pixi2.default.Rectangle(frames[i].spriteSourceSize.x / resolution, frames[i].spriteSourceSize.y / resolution, frames[i].sourceSize.w / resolution, frames[i].sourceSize.h / resolution);
 						}
 
 						// flip the width and height!
@@ -7619,14 +7742,14 @@
 						size.height /= resolution;
 
 						// lets also add the frame to pixi's global cache for fromFrame and fromImage functions
-						_pixiJsBinPixi2["default"].utils.TextureCache[i] = new _pixiJsBinPixi2["default"].Texture(baseTexture, size, size.clone(), trim, frames[i].rotated);
+						_pixi2.default.utils.TextureCache[i] = new _pixi2.default.Texture(baseTexture, size, size.clone(), trim, frames[i].rotated);
 					}
 				}
 			}
 		}]);
 
 		return Main;
-	})();
+	}();
 
 	new Main();
 
@@ -7692,17 +7815,16 @@
 
 		'use strict';
 
-		Object.defineProperty(exports, '__esModule', {
+		Object.defineProperty(exports, "__esModule", {
 			value: true
 		});
-
-		function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { 'default': obj }; }
+		exports.MotionTween = exports.Tween = exports.InteractiveTimeline = exports.Timeline = undefined;
 
 		var _timeline = __webpack_require__(1);
 
 		var _timeline2 = _interopRequireDefault(_timeline);
 
-		var _interactiveTimeline = __webpack_require__(13);
+		var _interactiveTimeline = __webpack_require__(6);
 
 		var _interactiveTimeline2 = _interopRequireDefault(_interactiveTimeline);
 
@@ -7714,10 +7836,12 @@
 
 		var _motionTween2 = _interopRequireDefault(_motionTween);
 
-		exports.Timeline = _timeline2['default'];
-		exports.InteractiveTimeline = _interactiveTimeline2['default'];
-		exports.Tween = _tween2['default'];
-		exports.MotionTween = _motionTween2['default'];
+		function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+		exports.Timeline = _timeline2.default;
+		exports.InteractiveTimeline = _interactiveTimeline2.default;
+		exports.Tween = _tween2.default;
+		exports.MotionTween = _motionTween2.default;
 
 	/***/ },
 	/* 1 */
@@ -7725,21 +7849,13 @@
 
 		'use strict';
 
-		Object.defineProperty(exports, '__esModule', {
+		Object.defineProperty(exports, "__esModule", {
 			value: true
 		});
 
 		var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
 
-		var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ('value' in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
-
-		var _get = function get(_x, _x2, _x3) { var _again = true; _function: while (_again) { var object = _x, property = _x2, receiver = _x3; _again = false; if (object === null) object = Function.prototype; var desc = Object.getOwnPropertyDescriptor(object, property); if (desc === undefined) { var parent = Object.getPrototypeOf(object); if (parent === null) { return undefined; } else { _x = parent; _x2 = property; _x3 = receiver; _again = true; desc = parent = undefined; continue _function; } } else if ('value' in desc) { return desc.value; } else { var getter = desc.get; if (getter === undefined) { return undefined; } return getter.call(receiver); } } };
-
-		function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { 'default': obj }; }
-
-		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError('Cannot call a class as a function'); } }
-
-		function _inherits(subClass, superClass) { if (typeof superClass !== 'function' && superClass !== null) { throw new TypeError('Super expression must either be null or a function, not ' + typeof superClass); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } }); if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass; }
+		var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
 
 		var _timelineState = __webpack_require__(2);
 
@@ -7749,40 +7865,40 @@
 
 		var _tween2 = _interopRequireDefault(_tween);
 
+		function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+
+		function _possibleConstructorReturn(self, call) { if (!self) { throw new ReferenceError("this hasn't been initialised - super() hasn't been called"); } return call && (typeof call === "object" || typeof call === "function") ? call : self; }
+
+		function _inherits(subClass, superClass) { if (typeof superClass !== "function" && superClass !== null) { throw new TypeError("Super expression must either be null or a function, not " + typeof superClass); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } }); if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass; }
+
 		var _TIMELINE_DEFAULT_OPTIONS = {
 			fps: 60
 		};
 
 		var _CHILD_DEFAULT_OPTIONS = {
 			fillMode: "both",
-			'in': null,
+			in: null,
 			loop: false,
 			out: null,
 			time: null
 		};
 
-		var Timeline = (function (_Tween) {
+		var Timeline = function (_Tween) {
 			_inherits(Timeline, _Tween);
-
-			_createClass(Timeline, null, [{
-				key: 'FILL_MODE',
-				value: {
-					NONE: "none",
-					FORWARD: "forward",
-					BACKWARD: "backward",
-					BOTH: "both"
-				},
-				enumerable: true
-			}]);
 
 			function Timeline(name, keyframesObject, options) {
 				_classCallCheck(this, Timeline);
 
-				_get(Object.getPrototypeOf(Timeline.prototype), 'constructor', this).call(this, name, keyframesObject, options);
+				var _this = _possibleConstructorReturn(this, Object.getPrototypeOf(Timeline).call(this, name, keyframesObject, options));
 
-				this._children = [];
-				this._currentTime = 0;
-				this._options = _extends({}, _TIMELINE_DEFAULT_OPTIONS, options);
+				_this._children = [];
+				_this._currentTime = 0;
+
+
+				_this._options = _extends({}, _TIMELINE_DEFAULT_OPTIONS, options);
+				return _this;
 			}
 
 			/*________________________________________________________
@@ -7807,6 +7923,7 @@
 			}, {
 				key: '_addChild',
 
+
 				/*________________________________________________________
 		  	PRIVATE CLASS METHODS
 		  ________________________________________________________*/
@@ -7824,8 +7941,8 @@
 					}
 
 					// set in property if not already set
-					if (o.settings['in'] == null) {
-						o.settings['in'] = o.settings.time;
+					if (o.settings.in == null) {
+						o.settings.in = o.settings.time;
 					}
 
 					// set out property if not already set
@@ -7854,15 +7971,15 @@
 						throw Error("Incorrectly set fillMode: " + settings.fillMode);
 					}
 
-					if (settings['in'] < settings.time) {
+					if (settings.in < settings.time) {
 						throw Error("The 'in' option can't preceed the 'time' option");
 					}
 
-					if (settings['in'] > settings.out) {
+					if (settings.in > settings.out) {
 						throw Error("The 'in' option can't be after the 'out' option");
 					}
 
-					if (settings.out < settings.time || settings.out < settings['in']) {
+					if (settings.out < settings.time || settings.out < settings.in) {
 						throw Error("The 'out' option can't preceed the 'time' or 'in' option");
 					}
 				}
@@ -7884,17 +8001,23 @@
 			}, {
 				key: '_getState',
 				value: function _getState(time) {
-					var _this = this;
+					var _this2 = this;
 
-					var state = new _timelineState2['default'](_timelineState2['default'].TYPE.TIMELINE, this._name);
-					var tweenState = undefined,
-					    resolvedTime = undefined;
+					var state = new _timelineState2.default(_timelineState2.default.TYPE.TIMELINE, this._name);
+					var tweenState = void 0,
+					    resolvedTime = void 0;
 
 					// Check to see if we have specified the 'timeRemap' property,
 					// if so remap time and then obtain state
 					if (this._propertyKeyframesMap.size > 0) {
 						if (this._propertyKeyframesMap.has("timeRemap")) {
 							var keyframes = this._propertyKeyframesMap.get("timeRemap");
+
+							// @TODO if time comes in here undefined then it is resolved to null,
+							// where we usually expect an undefined to deliver us a null state property value
+							// resolved time is returning as 0, and therefore we are not getting the correct state
+
+							// 160619 this is now done, undefined in produces null out
 
 							time = this._getTimeRemapTweenValue(keyframes, time);
 						}
@@ -7903,7 +8026,7 @@
 					this._children.forEach(function (childObjectData, index) {
 
 						// loop is accounted for here, fill is automatically built into tween
-						resolvedTime = _this._resolveChildRelativeTime(time, childObjectData.settings);
+						resolvedTime = _this2._resolveChildRelativeTime(time, childObjectData.settings);
 
 						tweenState = childObjectData.child.getState(resolvedTime);
 
@@ -7920,13 +8043,14 @@
 		   * @param {Number} time Time in milisecond
 		   * @return Number
 		   */
+
 			}, {
 				key: '_loopTime',
 				value: function _loopTime(time, childSettings) {
-					var childEditDuration = childSettings.out - childSettings['in'];
-					var realativeTime = time - childSettings['in'];
+					var childEditDuration = childSettings.out - childSettings.in;
+					var realativeTime = time - childSettings.in;
 					var loopedTime = (realativeTime % childEditDuration + childEditDuration) % childEditDuration;
-					return childSettings['in'] + loopedTime;
+					return childSettings.in + loopedTime;
 				}
 
 				/**
@@ -7936,19 +8060,26 @@
 		   * @param {Number} time Time in milisecond
 		   * @return Number
 		   */
+
 			}, {
 				key: '_resolveChildRelativeTime',
 				value: function _resolveChildRelativeTime(time, childSettings) {
+					// brief check to see if the time is null or undefined, this may come as a result of attempting to obtain
+					// a time outside of the parents range, previously below return 0 resulting in incorrect resolved time.
+					if (time == null) {
+						return time;
+					}
+
 					// now we have the beginning position of the child we can determine the time relative to the child
 					var childRelativeTime = time - childSettings.time;
 
-					if (time < childSettings['in']) {
+					if (time < childSettings.in) {
 						if (childSettings.fillMode === Timeline.FILL_MODE.BACKWARD || childSettings.fillMode === Timeline.FILL_MODE.BOTH) {
 
 							if (childSettings.loop) {
 								return this._loopTime(time, childSettings) - childSettings.time;
 							} else {
-								return childSettings['in'] - childSettings.time;
+								return childSettings.in - childSettings.time;
 							}
 						} else {
 							return undefined;
@@ -7978,15 +8109,16 @@
 		   * @param {Number} time Time in milisecond
 		   * @return Number
 		   */
+
 			}, {
 				key: '_getTimeRemapTweenValue',
 				value: function _getTimeRemapTweenValue(keyframes, time) {
 					var value = null;
 					// interate over keyframes untill we find the exact value or keyframes either side
 					var length = keyframes.length;
-					var keyframe = undefined,
-					    keyframeValue = undefined;
-					var lastKeyframe = undefined;
+					var keyframe = void 0,
+					    keyframeValue = void 0;
+					var lastKeyframe = void 0;
 
 					// the aim here is to find the keyframe to either side of the time value
 
@@ -8082,10 +8214,15 @@
 			}]);
 
 			return Timeline;
-		})(_tween2['default']);
+		}(_tween2.default);
 
-		exports['default'] = Timeline;
-		module.exports = exports['default'];
+		Timeline.FILL_MODE = {
+			NONE: "none",
+			FORWARD: "forward",
+			BACKWARD: "backward",
+			BOTH: "both"
+		};
+		exports.default = Timeline;
 
 	/***/ },
 	/* 2 */
@@ -8097,20 +8234,11 @@
 			value: true
 		});
 
-		var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
+		var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
 
 		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 
-		var TimelineState = (function () {
-			_createClass(TimelineState, null, [{
-				key: "TYPE",
-				value: {
-					TWEEN: "tween",
-					TIMELINE: "timeline"
-				},
-				enumerable: true
-			}]);
-
+		var TimelineState = function () {
 			function TimelineState(type, name) {
 				_classCallCheck(this, TimelineState);
 
@@ -8168,10 +8296,13 @@
 			}]);
 
 			return TimelineState;
-		})();
+		}();
 
-		exports["default"] = TimelineState;
-		module.exports = exports["default"];
+		TimelineState.TYPE = {
+			TWEEN: "tween",
+			TIMELINE: "timeline"
+		};
+		exports.default = TimelineState;
 
 	/***/ },
 	/* 3 */
@@ -8179,17 +8310,13 @@
 
 		'use strict';
 
-		Object.defineProperty(exports, '__esModule', {
+		Object.defineProperty(exports, "__esModule", {
 			value: true
 		});
 
 		var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
 
-		var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ('value' in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
-
-		function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { 'default': obj }; }
-
-		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError('Cannot call a class as a function'); } }
+		var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
 
 		var _motionTween = __webpack_require__(4);
 
@@ -8199,11 +8326,15 @@
 
 		var _timelineState2 = _interopRequireDefault(_timelineState);
 
-		var _timelineAbstract = __webpack_require__(12);
+		var _timelineAbstract = __webpack_require__(5);
 
 		var _timelineAbstract2 = _interopRequireDefault(_timelineAbstract);
 
-		var Tween = (function () {
+		function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+
+		var Tween = function () {
 			function Tween(name, keyframesObject) {
 				_classCallCheck(this, Tween);
 
@@ -8211,6 +8342,7 @@
 				this._options = null;
 				this._name = null;
 				this._duration = 0;
+
 
 				this._init(name, keyframesObject);
 			}
@@ -8231,6 +8363,7 @@
 				}
 			}, {
 				key: '_init',
+
 
 				/*________________________________________________________
 		  	PRIVATE CLASS METHODS
@@ -8255,7 +8388,7 @@
 				value: function _addKeyframes(keyframesObject) {
 					var _this = this;
 
-					var keyframes = undefined;
+					var keyframes = void 0;
 
 					Object.keys(keyframesObject).map(function (key, index) {
 
@@ -8274,6 +8407,7 @@
 		   * @param {Array} keyframes An Array of keyframe objects
 		   * @returns Array
 		   */
+
 			}, {
 				key: '_cloneKeyframes',
 				value: function _cloneKeyframes(keyframes) {
@@ -8304,12 +8438,13 @@
 		   * @param {Number} time Time in milisecond
 		   * @return Object
 		   */
+
 			}, {
 				key: '_getState',
 				value: function _getState(time) {
 					var _this2 = this;
 
-					var state = new _timelineState2['default'](_timelineState2['default'].TYPE.TWEEN, this._name);
+					var state = new _timelineState2.default(_timelineState2.default.TYPE.TWEEN, this._name);
 
 					this._propertyKeyframesMap.forEach(function (keyframes, property) {
 
@@ -8327,15 +8462,16 @@
 		   * @param {Number} time Time in milisecond
 		   * @return Number
 		   */
+
 			}, {
 				key: '_getTweenValue',
 				value: function _getTweenValue(keyframes, time) {
 					var value = null;
 					// interate over keyframes untill we find the exact value or keyframes either side
 					var length = keyframes.length;
-					var keyframe = undefined,
-					    keyframeValue = undefined;
-					var lastKeyframe = undefined;
+					var keyframe = void 0,
+					    keyframeValue = void 0;
+					var lastKeyframe = void 0;
 
 					// the aim here is to find the keyframe to either side of the time value
 
@@ -8390,6 +8526,7 @@
 		  * @param {Number} time Time in milisecond
 		  * @return Number
 		  */
+
 			}, {
 				key: '_tweenBetweenKeyframes',
 				value: function _tweenBetweenKeyframes(lastKeyframe, keyframe, time) {
@@ -8406,7 +8543,7 @@
 							animatorOptions = _extends({}, animatorOptions, lastKeyframe.animatorOptions);
 						}
 
-						easedDelta = _motionTween2['default'].getValue(lastKeyframe.animatorType, animatorOptions, deltaFloat);
+						easedDelta = _motionTween2.default.getValue(lastKeyframe.animatorType, animatorOptions, deltaFloat);
 					}
 
 					var valueDifference = keyframe.value - lastKeyframe.value;
@@ -8427,947 +8564,1049 @@
 			}]);
 
 			return Tween;
-		})();
+		}();
 
-		exports['default'] = Tween;
-		module.exports = exports['default'];
+		exports.default = Tween;
 
 	/***/ },
 	/* 4 */
 	/***/ function(module, exports, __webpack_require__) {
 
-		"use strict";
+		(function webpackUniversalModuleDefinition(root, factory) {
+			if(true)
+				module.exports = factory();
+			else if(typeof define === 'function' && define.amd)
+				define([], factory);
+			else {
+				var a = factory();
+				for(var i in a) (typeof exports === 'object' ? exports : root)[i] = a[i];
+			}
+		})(this, function() {
+		return /******/ (function(modules) { // webpackBootstrap
+		/******/ 	// The module cache
+		/******/ 	var installedModules = {};
 
-		Object.defineProperty(exports, "__esModule", {
-		  value: true
+		/******/ 	// The require function
+		/******/ 	function __webpack_require__(moduleId) {
+
+		/******/ 		// Check if module is in cache
+		/******/ 		if(installedModules[moduleId])
+		/******/ 			return installedModules[moduleId].exports;
+
+		/******/ 		// Create a new module (and put it into the cache)
+		/******/ 		var module = installedModules[moduleId] = {
+		/******/ 			exports: {},
+		/******/ 			id: moduleId,
+		/******/ 			loaded: false
+		/******/ 		};
+
+		/******/ 		// Execute the module function
+		/******/ 		modules[moduleId].call(module.exports, module, module.exports, __webpack_require__);
+
+		/******/ 		// Flag the module as loaded
+		/******/ 		module.loaded = true;
+
+		/******/ 		// Return the exports of the module
+		/******/ 		return module.exports;
+		/******/ 	}
+
+
+		/******/ 	// expose the modules object (__webpack_modules__)
+		/******/ 	__webpack_require__.m = modules;
+
+		/******/ 	// expose the module cache
+		/******/ 	__webpack_require__.c = installedModules;
+
+		/******/ 	// __webpack_public_path__
+		/******/ 	__webpack_require__.p = "";
+
+		/******/ 	// Load entry module and return exports
+		/******/ 	return __webpack_require__(0);
+		/******/ })
+		/************************************************************************/
+		/******/ ([
+		/* 0 */
+		/***/ function(module, exports, __webpack_require__) {
+
+			module.exports = __webpack_require__(1);
+
+
+		/***/ },
+		/* 1 */
+		/***/ function(module, exports, __webpack_require__) {
+
+			"use strict";
+
+			Object.defineProperty(exports, "__esModule", {
+			  value: true
+			});
+
+			var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
+
+			function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key]; } } newObj["default"] = obj; return newObj; } }
+
+			function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { "default": obj }; }
+
+			function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+
+			var _Utils = __webpack_require__(2);
+
+			var _Utils2 = _interopRequireDefault(_Utils);
+
+			var _Easing = __webpack_require__(3);
+
+			var Easing = _interopRequireWildcard(_Easing);
+
+			var _animatorsCubicBezier = __webpack_require__(4);
+
+			var _animatorsCubicBezier2 = _interopRequireDefault(_animatorsCubicBezier);
+
+			var _animatorsEase = __webpack_require__(5);
+
+			var _animatorsEase2 = _interopRequireDefault(_animatorsEase);
+
+			var _animatorsFriction = __webpack_require__(6);
+
+			var _animatorsFriction2 = _interopRequireDefault(_animatorsFriction);
+
+			var _animatorsSpring = __webpack_require__(7);
+
+			var _animatorsSpring2 = _interopRequireDefault(_animatorsSpring);
+
+			var _animatorsSpringRK4 = __webpack_require__(8);
+
+			var _animatorsSpringRK42 = _interopRequireDefault(_animatorsSpringRK4);
+
+			var MotionTween = (function () {
+			  _createClass(MotionTween, null, [{
+			    key: "DEFAULT_OPTIONS",
+			    value: {
+			      time: 1000,
+			      startValue: 0,
+			      endValue: 1,
+			      animatorType: _animatorsFriction2["default"].Type,
+			      animatorOptions: {}, // use defaults of selected type
+			      update: function update() {},
+			      complete: function complete() {}
+			    },
+			    enumerable: true
+			  }, {
+			    key: "easingFunction",
+			    value: {
+			      easeInQuad: Easing.easeInQuad,
+			      easeOutQuad: Easing.easeOutQuad,
+			      easeInOutQuad: Easing.easeInOutQuad,
+			      swing: Easing.swing,
+			      easeInCubic: Easing.easeInCubic,
+			      easeOutCubic: Easing.easeOutCubic,
+			      easeInOutCubic: Easing.easeInOutCubic,
+			      easeInQuart: Easing.easeInQuart,
+			      easeOutQuart: Easing.easeOutQuart,
+			      easeInOutQuart: Easing.easeInOutQuart,
+			      easeInQuint: Easing.easeInQuint,
+			      easeOutQuint: Easing.easeOutQuint,
+			      easeInOutQuint: Easing.easeInOutQuint,
+			      easeInSine: Easing.easeInSine,
+			      easeOutSine: Easing.easeOutSine,
+			      easeInOutSine: Easing.easeInOutSine,
+			      easeInExpo: Easing.easeInExpo,
+			      easeOutExpo: Easing.easeOutExpo,
+			      easeInOutExpo: Easing.easeInOutExpo,
+			      easeInCirc: Easing.easeInCirc,
+			      easeOutCirc: Easing.easeOutCirc,
+			      easeInOutCirc: Easing.easeInOutCirc,
+			      easeInElastic: Easing.easeInElastic,
+			      easeOutElastic: Easing.easeOutElastic,
+			      easeInOutElastic: Easing.easeInOutElastic,
+			      easeInBack: Easing.easeInBack,
+			      easeOutBack: Easing.easeOutBack,
+			      easeInOutBack: Easing.easeInOutBack,
+			      easeInBounce: Easing.easeInBounce,
+			      easeOutBounce: Easing.easeOutBounce,
+			      easeInOutBounce: Easing.easeInOutBounce
+			    },
+			    enumerable: true
+			  }, {
+			    key: "animatorType",
+			    value: {
+			      spring: _animatorsSpring2["default"].Type,
+			      springRK4: _animatorsSpringRK42["default"].Type,
+			      friction: _animatorsFriction2["default"].Type,
+			      ease: _animatorsEase2["default"].Type,
+			      cubicBezier: _animatorsCubicBezier2["default"].Type
+			    },
+			    enumerable: true
+			  }]);
+
+			  function MotionTween(options) {
+			    _classCallCheck(this, MotionTween);
+
+			    this._time = null;
+			    this._startX = null;
+			    this._endX = null;
+			    this._lastTime = null;
+			    this._startTime = null;
+			    this._options = {};
+			    this._isAnimating = false;
+			    this._animator = null;
+			    this._x = null;
+
+			    this._init(options);
+			    return this;
+			  }
+
+			  _createClass(MotionTween, [{
+			    key: "start",
+			    value: function start() {
+			      this._start();
+			    }
+			  }, {
+			    key: "destroy",
+			    value: function destroy() {
+			      this._destroy();
+			    }
+			  }, {
+			    key: "_init",
+			    value: function _init(options) {
+			      // Deep merge of default and incoming options
+			      _Utils2["default"].extend(this._options, MotionTween.DEFAULT_OPTIONS, true);
+			      _Utils2["default"].extend(this._options, options, true);
+
+			      // time we can ignore for some of the animators
+			      this._time = this._options.time;
+			      this._startX = this._options.startValue;
+			      this._endX = this._options.endValue;
+			    }
+			  }, {
+			    key: "_start",
+			    value: function _start() {
+			      this._lastTime = 0;
+			      this._startTime = 0;
+
+			      this._options.animatorOptions.destination = this._endX;
+			      this._options.animatorOptions.origin = this._startX;
+
+			      switch (this._options.animatorType) {
+			        case _animatorsSpring2["default"].Type:
+			          this._animator = new _animatorsSpring2["default"](this._options.animatorOptions);
+			          break;
+			        case _animatorsSpringRK42["default"].Type:
+			          this._animator = new _animatorsSpringRK42["default"](this._options.animatorOptions);
+			          break;
+			        case _animatorsFriction2["default"].Type:
+			          this._animator = new _animatorsFriction2["default"](this._options.animatorOptions);
+			          break;
+			        case _animatorsCubicBezier2["default"].Type:
+			          this._animator = new _animatorsCubicBezier2["default"](this._options.animatorOptions);
+			          break;
+			        default:
+			          this._animator = new _animatorsEase2["default"](this._options.animatorOptions);
+			      }
+
+			      this._isAnimating = true;
+			      this._startTime = this._lastTime = new Date().getTime();
+
+			      this._requestionAnimationFrameID = window.requestAnimationFrame(this._tick.bind(this));
+			    }
+			  }, {
+			    key: "_destroy",
+			    value: function _destroy() {
+			      window.cancelAnimationFrame(this._requestionAnimationFrameID);
+			      this._options = null;
+			    }
+			  }, {
+			    key: "_tick",
+			    value: function _tick() {
+			      var now = new Date().getTime();
+
+			      var delta = (now - this._lastTime) / this._time;
+			      this._lastTime = now;
+
+			      // pass in normalised delta
+			      var x = this._animator.step(delta);
+
+			      if (this._animator.isFinished() === false) {
+
+			        this._x = x;
+
+			        this._options.update(this._x);
+			        this._requestionAnimationFrameID = window.requestAnimationFrame(this._tick.bind(this));
+			      } else {
+			        this._x = this._endX;
+			        this._options.update(this._x);
+			        this._options.complete();
+			        this._isAnimating = false;
+			      }
+			    }
+			  }], [{
+			    key: "getValue",
+			    value: function getValue(animatorType, animatorOptions, time) {
+			      return MotionTween._getValue(animatorType, animatorOptions, time);
+			    }
+			  }, {
+			    key: "_getValue",
+			    value: function _getValue(animatorType, animatorOptions, time) {
+			      switch (animatorType) {
+			        case _animatorsCubicBezier2["default"].Type:
+			          return _animatorsCubicBezier2["default"].getValue(animatorOptions, time);
+			          break;
+			        default:
+			          return _animatorsEase2["default"].getValue(animatorOptions, time);
+			      }
+			    }
+			  }]);
+
+			  return MotionTween;
+			})();
+
+			exports["default"] = MotionTween;
+			module.exports = exports["default"];
+
+		/***/ },
+		/* 2 */
+		/***/ function(module, exports) {
+
+			'use strict';
+
+			Object.defineProperty(exports, '__esModule', {
+			    value: true
+			});
+
+			var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ('value' in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
+
+			function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError('Cannot call a class as a function'); } }
+
+			var Utils = (function () {
+			    function Utils() {
+			        _classCallCheck(this, Utils);
+			    }
+
+			    _createClass(Utils, [{
+			        key: 'extend',
+			        value: function extend(destination, source) {
+			            var isDeep = arguments.length <= 2 || arguments[2] === undefined ? false : arguments[2];
+
+			            var hasDepth = false;
+			            for (var property in source) {
+			                hasDepth = false;
+			                if (isDeep === true && source[property] && source[property].constructor) {
+			                    if (source[property].constructor === Object) {
+			                        hasDepth = true;
+			                        destination[property] = this.extend({}, source[property], true);
+			                    } else if (source[property].constructor === Function) {
+			                        // if (window.console) console.warn("Can't clone, can only reference Functions");
+			                        hasDepth = false;
+			                    }
+			                }
+			                if (hasDepth === false) {
+			                    destination[property] = source[property];
+			                }
+			            }
+			            return destination;
+			        }
+			    }, {
+			        key: 'sum',
+			        value: function sum(arr) {
+			            var sum = 0;
+			            var d = arr.length;
+			            while (d--) {
+			                sum += arr[d];
+			            }
+			            return sum;
+			        }
+			    }]);
+
+			    return Utils;
+			})();
+
+			exports['default'] = new Utils();
+
+			(function () {
+			    var lastTime = 0;
+			    var vendors = ['ms', 'moz', 'webkit', 'o'];
+			    for (var x = 0; x < vendors.length && !window.requestAnimationFrame; ++x) {
+			        window.requestAnimationFrame = window[vendors[x] + 'RequestAnimationFrame'];
+			        window.cancelAnimationFrame = window[vendors[x] + 'CancelAnimationFrame'] || window[vendors[x] + 'CancelRequestAnimationFrame'];
+			    }
+
+			    if (!window.requestAnimationFrame) {
+			        window.requestAnimationFrame = function (callback, element) {
+			            var currTime = new Date().getTime();
+			            var timeToCall = Math.max(0, 16 - (currTime - lastTime));
+			            var id = window.setTimeout(function () {
+			                callback(currTime + timeToCall);
+			            }, timeToCall);
+			            lastTime = currTime + timeToCall;
+			            return id;
+			        };
+			    }
+
+			    if (!window.cancelAnimationFrame) {
+			        window.cancelAnimationFrame = function (id) {
+			            clearTimeout(id);
+			        };
+			    }
+			})();
+			module.exports = exports['default'];
+
+		/***/ },
+		/* 3 */
+		/***/ function(module, exports) {
+
+			// t: current time, b: begInnIng value, c: change In value, d: duration
+			"use strict";
+
+			Object.defineProperty(exports, "__esModule", {
+				value: true
+			});
+			exports.swing = swing;
+			exports.easeInQuad = easeInQuad;
+			exports.easeOutQuad = easeOutQuad;
+			exports.easeInOutQuad = easeInOutQuad;
+			exports.easeInCubic = easeInCubic;
+			exports.easeOutCubic = easeOutCubic;
+			exports.easeInOutCubic = easeInOutCubic;
+			exports.easeInQuart = easeInQuart;
+			exports.easeOutQuart = easeOutQuart;
+			exports.easeInOutQuart = easeInOutQuart;
+			exports.easeInQuint = easeInQuint;
+			exports.easeOutQuint = easeOutQuint;
+			exports.easeInOutQuint = easeInOutQuint;
+			exports.easeInSine = easeInSine;
+			exports.easeOutSine = easeOutSine;
+			exports.easeInOutSine = easeInOutSine;
+			exports.easeInExpo = easeInExpo;
+			exports.easeOutExpo = easeOutExpo;
+			exports.easeInOutExpo = easeInOutExpo;
+			exports.easeInCirc = easeInCirc;
+			exports.easeOutCirc = easeOutCirc;
+			exports.easeInOutCirc = easeInOutCirc;
+			exports.easeInElastic = easeInElastic;
+			exports.easeOutElastic = easeOutElastic;
+			exports.easeInOutElastic = easeInOutElastic;
+			exports.easeInBack = easeInBack;
+			exports.easeOutBack = easeOutBack;
+			exports.easeInOutBack = easeInOutBack;
+			exports.easeInBounce = easeInBounce;
+			exports.easeOutBounce = easeOutBounce;
+			exports.easeInOutBounce = easeInOutBounce;
+
+			function swing(t, b, c, d) {
+				return easeOutQuad(t, b, c, d);
+			}
+
+			function easeInQuad(t, b, c, d) {
+				return c * (t /= d) * t + b;
+			}
+
+			function easeOutQuad(t, b, c, d) {
+				return -c * (t /= d) * (t - 2) + b;
+			}
+
+			function easeInOutQuad(t, b, c, d) {
+				if ((t /= d / 2) < 1) return c / 2 * t * t + b;
+				return -c / 2 * (--t * (t - 2) - 1) + b;
+			}
+
+			function easeInCubic(t, b, c, d) {
+				return c * (t /= d) * t * t + b;
+			}
+
+			function easeOutCubic(t, b, c, d) {
+				return c * ((t = t / d - 1) * t * t + 1) + b;
+			}
+
+			function easeInOutCubic(t, b, c, d) {
+				if ((t /= d / 2) < 1) return c / 2 * t * t * t + b;
+				return c / 2 * ((t -= 2) * t * t + 2) + b;
+			}
+
+			function easeInQuart(t, b, c, d) {
+				return c * (t /= d) * t * t * t + b;
+			}
+
+			function easeOutQuart(t, b, c, d) {
+				return -c * ((t = t / d - 1) * t * t * t - 1) + b;
+			}
+
+			function easeInOutQuart(t, b, c, d) {
+				if ((t /= d / 2) < 1) return c / 2 * t * t * t * t + b;
+				return -c / 2 * ((t -= 2) * t * t * t - 2) + b;
+			}
+
+			function easeInQuint(t, b, c, d) {
+				return c * (t /= d) * t * t * t * t + b;
+			}
+
+			function easeOutQuint(t, b, c, d) {
+				return c * ((t = t / d - 1) * t * t * t * t + 1) + b;
+			}
+
+			function easeInOutQuint(t, b, c, d) {
+				if ((t /= d / 2) < 1) return c / 2 * t * t * t * t * t + b;
+				return c / 2 * ((t -= 2) * t * t * t * t + 2) + b;
+			}
+
+			function easeInSine(t, b, c, d) {
+				return -c * Math.cos(t / d * (Math.PI / 2)) + c + b;
+			}
+
+			function easeOutSine(t, b, c, d) {
+				return c * Math.sin(t / d * (Math.PI / 2)) + b;
+			}
+
+			function easeInOutSine(t, b, c, d) {
+				return -c / 2 * (Math.cos(Math.PI * t / d) - 1) + b;
+			}
+
+			function easeInExpo(t, b, c, d) {
+				return t == 0 ? b : c * Math.pow(2, 10 * (t / d - 1)) + b;
+			}
+
+			function easeOutExpo(t, b, c, d) {
+				return t == d ? b + c : c * (-Math.pow(2, -10 * t / d) + 1) + b;
+			}
+
+			function easeInOutExpo(t, b, c, d) {
+				if (t == 0) return b;
+				if (t == d) return b + c;
+				if ((t /= d / 2) < 1) return c / 2 * Math.pow(2, 10 * (t - 1)) + b;
+				return c / 2 * (-Math.pow(2, -10 * --t) + 2) + b;
+			}
+
+			function easeInCirc(t, b, c, d) {
+				return -c * (Math.sqrt(1 - (t /= d) * t) - 1) + b;
+			}
+
+			function easeOutCirc(t, b, c, d) {
+				return c * Math.sqrt(1 - (t = t / d - 1) * t) + b;
+			}
+
+			function easeInOutCirc(t, b, c, d) {
+				if ((t /= d / 2) < 1) return -c / 2 * (Math.sqrt(1 - t * t) - 1) + b;
+				return c / 2 * (Math.sqrt(1 - (t -= 2) * t) + 1) + b;
+			}
+
+			function easeInElastic(t, b, c, d) {
+				var s = 1.70158;var p = 0;var a = c;
+				if (t == 0) return b;if ((t /= d) == 1) return b + c;if (!p) p = d * .3;
+				if (a < Math.abs(c)) {
+					a = c;var s = p / 4;
+				} else var s = p / (2 * Math.PI) * Math.asin(c / a);
+				return -(a * Math.pow(2, 10 * (t -= 1)) * Math.sin((t * d - s) * (2 * Math.PI) / p)) + b;
+			}
+
+			function easeOutElastic(t, b, c, d) {
+				var s = 1.70158;var p = 0;var a = c;
+				if (t == 0) return b;if ((t /= d) == 1) return b + c;if (!p) p = d * .3;
+				if (a < Math.abs(c)) {
+					a = c;var s = p / 4;
+				} else var s = p / (2 * Math.PI) * Math.asin(c / a);
+				return a * Math.pow(2, -10 * t) * Math.sin((t * d - s) * (2 * Math.PI) / p) + c + b;
+			}
+
+			function easeInOutElastic(t, b, c, d) {
+				var s = 1.70158;var p = 0;var a = c;
+				if (t == 0) return b;if ((t /= d / 2) == 2) return b + c;if (!p) p = d * (.3 * 1.5);
+				if (a < Math.abs(c)) {
+					a = c;var s = p / 4;
+				} else var s = p / (2 * Math.PI) * Math.asin(c / a);
+				if (t < 1) return -.5 * (a * Math.pow(2, 10 * (t -= 1)) * Math.sin((t * d - s) * (2 * Math.PI) / p)) + b;
+				return a * Math.pow(2, -10 * (t -= 1)) * Math.sin((t * d - s) * (2 * Math.PI) / p) * .5 + c + b;
+			}
+
+			function easeInBack(t, b, c, d, s) {
+				if (s == undefined) s = 1.70158;
+				return c * (t /= d) * t * ((s + 1) * t - s) + b;
+			}
+
+			function easeOutBack(t, b, c, d, s) {
+				if (s == undefined) s = 1.70158;
+				return c * ((t = t / d - 1) * t * ((s + 1) * t + s) + 1) + b;
+			}
+
+			function easeInOutBack(t, b, c, d, s) {
+				if (s == undefined) s = 1.70158;
+				if ((t /= d / 2) < 1) return c / 2 * (t * t * (((s *= 1.525) + 1) * t - s)) + b;
+				return c / 2 * ((t -= 2) * t * (((s *= 1.525) + 1) * t + s) + 2) + b;
+			}
+
+			function easeInBounce(t, b, c, d) {
+				return c - easeOutBounce(d - t, 0, c, d) + b;
+			}
+
+			function easeOutBounce(t, b, c, d) {
+				if ((t /= d) < 1 / 2.75) {
+					return c * (7.5625 * t * t) + b;
+				} else if (t < 2 / 2.75) {
+					return c * (7.5625 * (t -= 1.5 / 2.75) * t + .75) + b;
+				} else if (t < 2.5 / 2.75) {
+					return c * (7.5625 * (t -= 2.25 / 2.75) * t + .9375) + b;
+				} else {
+					return c * (7.5625 * (t -= 2.625 / 2.75) * t + .984375) + b;
+				}
+			}
+
+			function easeInOutBounce(t, b, c, d) {
+				if (t < d / 2) return easeInBounce(t * 2, 0, c, d) * .5 + b;
+				return easeOutBounce(t * 2 - d, 0, c, d) * .5 + c * .5 + b;
+			}
+
+		/***/ },
+		/* 4 */
+		/***/ function(module, exports) {
+
+			"use strict";
+
+			Object.defineProperty(exports, "__esModule", {
+			  value: true
+			});
+
+			var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
+
+			var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
+
+			function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+
+			var CubicBezier = (function () {
+			  _createClass(CubicBezier, null, [{
+			    key: "DEFAULT_OPTIONS",
+			    value: {
+			      tolerance: 0.001,
+			      controlPoints: [.15, .66, .83, .67],
+			      destination: 1
+			    },
+			    enumerable: true
+			  }, {
+			    key: "Type",
+			    value: "CubicBezier",
+			    enumerable: true
+			  }]);
+
+			  function CubicBezier(options) {
+			    _classCallCheck(this, CubicBezier);
+
+			    // merge default with passed
+			    this._options = _extends({}, CubicBezier.DEFAULT_OPTIONS, options);
+
+			    this._x = 0;
+			    this._time = 0;
+			  }
+
+			  _createClass(CubicBezier, [{
+			    key: "step",
+			    value: function step(delta) {
+			      // t: current time, b: begInnIng value, c: change In value, d: duration
+			      this._time += delta;
+			      this._x = CubicBezier._getPointOnBezierCurve(this._options.controlPoints, this._time);
+			      return this._x * this._options.destination;
+			    }
+			  }, {
+			    key: "isFinished",
+			    value: function isFinished() {
+			      return this._time >= 1;
+			    }
+			  }], [{
+			    key: "getValue",
+			    value: function getValue(options, time) {
+			      return CubicBezier._getPointOnBezierCurve(options.controlPoints, time);
+			    }
+			  }, {
+			    key: "_getPointOnBezierCurve",
+			    value: function _getPointOnBezierCurve(controlPoints, l) {
+			      var a1 = { x: 0, y: 0 };
+			      var a2 = { x: 1, y: 1 };
+
+			      var c1 = { x: controlPoints[0], y: controlPoints[1] };
+			      var c2 = { x: controlPoints[2], y: controlPoints[3] };
+
+			      var b1 = CubicBezier._interpolate(a1, c1, l);
+			      var b2 = CubicBezier._interpolate(c1, c2, l);
+			      var b3 = CubicBezier._interpolate(c2, a2, l);
+
+			      c1 = CubicBezier._interpolate(b1, b2, l);
+			      c2 = CubicBezier._interpolate(b2, b3, l);
+
+			      return CubicBezier._interpolate(c1, c2, l).y;
+			    }
+			  }, {
+			    key: "_interpolate",
+			    value: function _interpolate(p1, p2, l) {
+			      var p3 = {};
+
+			      p3.x = p1.x + (p2.x - p1.x) * l;
+			      p3.y = p1.y + (p2.y - p1.y) * l;
+
+			      return p3;
+			    }
+			  }]);
+
+			  return CubicBezier;
+			})();
+
+			exports["default"] = CubicBezier;
+			module.exports = exports["default"];
+
+		/***/ },
+		/* 5 */
+		/***/ function(module, exports, __webpack_require__) {
+
+			"use strict";
+
+			Object.defineProperty(exports, "__esModule", {
+			  value: true
+			});
+
+			var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
+
+			var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
+
+			function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key]; } } newObj["default"] = obj; return newObj; } }
+
+			function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+
+			var _Easing = __webpack_require__(3);
+
+			var Easing = _interopRequireWildcard(_Easing);
+
+			var Ease = (function () {
+			  _createClass(Ease, null, [{
+			    key: "DEFAULT_OPTIONS",
+			    value: {
+			      tolerance: 0.001,
+			      easingFunction: Easing.easeOutQuad,
+			      destination: 1
+			    },
+			    enumerable: true
+			  }, {
+			    key: "Type",
+			    value: "Ease",
+			    enumerable: true
+			  }]);
+
+			  function Ease(options) {
+			    _classCallCheck(this, Ease);
+
+			    // merge default with passed
+			    this._options = _extends({}, Ease.DEFAULT_OPTIONS, options);
+
+			    this._x = 0;
+			    this._time = 0;
+			  }
+
+			  _createClass(Ease, [{
+			    key: "step",
+			    value: function step(delta) {
+			      // t: current time, b: begInnIng value, c: change In value, d: duration
+			      this._time += delta;
+			      this._x = this._options.easingFunction(this._time, 0, 1, 1);
+			      return this._x * this._options.destination;
+			    }
+			  }, {
+			    key: "isFinished",
+			    value: function isFinished() {
+			      return this._time >= 1;
+			    }
+			  }], [{
+			    key: "getValue",
+			    value: function getValue(options, time) {
+			      return options.easingFunction(time, 0, 1, 1);
+			    }
+			  }]);
+
+			  return Ease;
+			})();
+
+			exports["default"] = Ease;
+			module.exports = exports["default"];
+
+		/***/ },
+		/* 6 */
+		/***/ function(module, exports) {
+
+			"use strict";
+
+			Object.defineProperty(exports, "__esModule", {
+			  value: true
+			});
+
+			var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
+
+			var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
+
+			function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+
+			var Friction = (function () {
+			  _createClass(Friction, null, [{
+			    key: "DEFAULT_OPTIONS",
+			    value: {
+			      applyAcceleration: function applyAcceleration(accel) {
+			        return accel;
+			      },
+			      friction: 0.1,
+			      destination: 1,
+			      tolerance: 0.001
+			    },
+			    enumerable: true
+			  }, {
+			    key: "Type",
+			    value: "FRICTION",
+			    enumerable: true
+			  }]);
+
+			  function Friction(options) {
+			    _classCallCheck(this, Friction);
+
+			    // merge default with passed
+			    this._options = _extends({}, Friction.DEFAULT_OPTIONS, options);
+			    this._v = 0;
+			    this._x = 0;
+			    this._acceleration = (this._options.destination - this._x) * this._options.friction;
+			    this._previousX = 0;
+			  }
+
+			  _createClass(Friction, [{
+			    key: "step",
+			    value: function step(delta) {
+			      // delta is ignored in the FrictionAnimator
+			      this._acceleration = this._options.applyAcceleration(this._acceleration);
+
+			      this._v += this._acceleration;
+			      this._x += this._v;
+			      this._v *= 1 - this._options.friction;
+
+			      // reset the acceleration as this is set initially
+			      this._acceleration = 0;
+			      this._previousX = this._x;
+
+			      return this._x;
+			    }
+			  }, {
+			    key: "isFinished",
+			    value: function isFinished() {
+			      return Math.round(this._v / this._options.tolerance) === 0 && Math.round(this._x / this._options.tolerance) === this._options.destination / this._options.tolerance ? true : false;
+			    }
+			  }]);
+
+			  return Friction;
+			})();
+
+			exports["default"] = Friction;
+			module.exports = exports["default"];
+
+		/***/ },
+		/* 7 */
+		/***/ function(module, exports) {
+
+			"use strict";
+
+			Object.defineProperty(exports, "__esModule", {
+			  value: true
+			});
+
+			var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
+
+			var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
+
+			function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+
+			var Spring = (function () {
+			  _createClass(Spring, null, [{
+			    key: "DEFAULT_OPTIONS",
+			    value: {
+			      stiffness: 100,
+			      damping: 20,
+			      tolerance: 0.001,
+			      destination: 1
+			    },
+			    enumerable: true
+			  }, {
+			    key: "Type",
+			    value: "SPRING",
+			    enumerable: true
+			  }]);
+
+			  function Spring(options) {
+			    _classCallCheck(this, Spring);
+
+			    // merge default with passed
+			    this._options = _extends({}, Spring.DEFAULT_OPTIONS, options);
+
+			    this._v = 0;
+			    this._x = 0;
+			  }
+
+			  _createClass(Spring, [{
+			    key: "step",
+			    value: function step(delta) {
+			      var k = 0 - this._options.stiffness;
+			      var b = 0 - this._options.damping;
+
+			      var F_spring = k * (this._x - 1);
+			      var F_damper = b * this._v;
+
+			      var mass = 1;
+
+			      this._v += (F_spring + F_damper) / mass * delta;
+			      this._x += this._v * delta;
+
+			      return this._x * this._options.destination;
+			    }
+			  }, {
+			    key: "isFinished",
+			    value: function isFinished() {
+			      return Math.round(this._v / this._options.tolerance) === 0 && Math.round(this._x / this._options.tolerance) === this._options.destination / this._options.tolerance ? true : false;
+			    }
+			  }]);
+
+			  return Spring;
+			})();
+
+			exports["default"] = Spring;
+			module.exports = exports["default"];
+
+		/***/ },
+		/* 8 */
+		/***/ function(module, exports) {
+
+			// r4k from http://mtdevans.com/2013/05/fourth-order-runge-kutta-algorithm-in-javascript-with-demo/
+			"use strict";
+
+			Object.defineProperty(exports, "__esModule", {
+			  value: true
+			});
+
+			var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
+
+			var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
+
+			function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+
+			var SpringRK4 = (function () {
+			  _createClass(SpringRK4, null, [{
+			    key: "DEFAULT_OPTIONS",
+			    value: {
+			      stiffness: 100,
+			      damping: 20,
+			      tolerance: 0.001,
+			      x: 1,
+			      v: 0,
+			      destination: 1,
+			      origin: 0
+			    },
+			    enumerable: true
+			  }, {
+			    key: "Type",
+			    value: "SPRINGRK4",
+			    enumerable: true
+			  }]);
+
+			  function SpringRK4(options) {
+			    _classCallCheck(this, SpringRK4);
+
+			    // merge default with passed
+			    this._options = _extends({}, SpringRK4.DEFAULT_OPTIONS, options);
+
+			    this._state = {
+			      x: this._options.destination - this._options.origin,
+			      v: this._options.v
+			    };
+			  }
+
+			  _createClass(SpringRK4, [{
+			    key: "_rk4",
+			    value: function _rk4(state, a, dt) {
+			      var x = state.x;
+			      var v = state.v;
+			      // Returns final (position, velocity) array after time dt has passed.
+			      //        x: initial position
+			      //        v: initial velocity
+			      //        a: acceleration function a(x,v,dt) (must be callable)
+			      //        dt: timestep
+			      var x1 = x;
+			      var v1 = v;
+			      var a1 = a(x1, v1, 0);
+
+			      var x2 = x + 0.5 * v1 * dt;
+			      var v2 = v + 0.5 * a1 * dt;
+			      var a2 = a(x2, v2, dt / 2);
+
+			      var x3 = x + 0.5 * v2 * dt;
+			      var v3 = v + 0.5 * a2 * dt;
+			      var a3 = a(x3, v3, dt / 2);
+
+			      var x4 = x + v3 * dt;
+			      var v4 = v + a3 * dt;
+			      var a4 = a(x4, v4, dt);
+
+			      var xf = x + dt / 6 * (v1 + 2 * v2 + 2 * v3 + v4);
+			      var vf = v + dt / 6 * (a1 + 2 * a2 + 2 * a3 + a4);
+
+			      return {
+			        x: xf,
+			        v: vf
+			      };
+			    }
+			  }, {
+			    key: "_acceleration",
+			    value: function _acceleration(x, v, dt) {
+			      // This particular one models a spring with a 1kg mass
+			      return -this._options.stiffness * x - this._options.damping * v;
+			    }
+			  }, {
+			    key: "step",
+			    value: function step(delta) {
+			      this._state = this._rk4(this._state, this._acceleration.bind(this), delta);
+
+			      return this.x;
+			    }
+			  }, {
+			    key: "isFinished",
+			    value: function isFinished() {
+			      return Math.round(this._state.v / this._options.tolerance) === 0 && Math.round(this._state.x / this._options.tolerance) === 0 ? true : false;
+			    }
+			  }, {
+			    key: "v",
+			    set: function set(v) {
+			      this._state.v = v;
+			    }
+			  }, {
+			    key: "x",
+			    set: function set(x) {
+			      this._state.x = x;
+			    },
+			    get: function get() {
+			      return this._options.destination - this._options.origin - this._state.x + this._options.origin;;
+			    }
+			  }, {
+			    key: "destination",
+			    set: function set(destination) {
+			      this._options.destination = destination;
+			      this._state.x = this._options.destination - this._options.origin;
+			    }
+			  }, {
+			    key: "origin",
+			    set: function set(origin) {
+			      this._options.origin = origin;
+			      this._state.x = this._options.destination - this._options.origin;
+			    }
+			  }]);
+
+			  return SpringRK4;
+			})();
+
+			exports["default"] = SpringRK4;
+			module.exports = exports["default"];
+
+		/***/ }
+		/******/ ])
 		});
-
-		var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
-
-		function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key]; } } newObj["default"] = obj; return newObj; } }
-
-		function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { "default": obj }; }
-
-		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
-
-		var _Utils = __webpack_require__(5);
-
-		var _Utils2 = _interopRequireDefault(_Utils);
-
-		var _Easing = __webpack_require__(6);
-
-		var Easing = _interopRequireWildcard(_Easing);
-
-		var _animatorsCubicBezier = __webpack_require__(7);
-
-		var _animatorsCubicBezier2 = _interopRequireDefault(_animatorsCubicBezier);
-
-		var _animatorsEase = __webpack_require__(8);
-
-		var _animatorsEase2 = _interopRequireDefault(_animatorsEase);
-
-		var _animatorsFriction = __webpack_require__(9);
-
-		var _animatorsFriction2 = _interopRequireDefault(_animatorsFriction);
-
-		var _animatorsSpring = __webpack_require__(10);
-
-		var _animatorsSpring2 = _interopRequireDefault(_animatorsSpring);
-
-		var _animatorsSpringRK4 = __webpack_require__(11);
-
-		var _animatorsSpringRK42 = _interopRequireDefault(_animatorsSpringRK4);
-
-		var MotionTween = (function () {
-		  _createClass(MotionTween, null, [{
-		    key: "DEFAULT_OPTIONS",
-		    value: {
-		      time: 1000,
-		      startValue: 0,
-		      endValue: 1,
-		      animatorType: _animatorsFriction2["default"].Type,
-		      animatorOptions: null, // use defaults of selected type
-		      update: function update() {},
-		      complete: function complete() {}
-		    },
-		    enumerable: true
-		  }, {
-		    key: "easingFunction",
-		    value: {
-		      easeInQuad: Easing.easeInQuad,
-		      easeOutQuad: Easing.easeOutQuad,
-		      easeInOutQuad: Easing.easeInOutQuad,
-		      swing: Easing.swing,
-		      easeInCubic: Easing.easeInCubic,
-		      easeOutCubic: Easing.easeOutCubic,
-		      easeInOutCubic: Easing.easeInOutCubic,
-		      easeInQuart: Easing.easeInQuart,
-		      easeOutQuart: Easing.easeOutQuart,
-		      easeInOutQuart: Easing.easeInOutQuart,
-		      easeInQuint: Easing.easeInQuint,
-		      easeOutQuint: Easing.easeOutQuint,
-		      easeInOutQuint: Easing.easeInOutQuint,
-		      easeInSine: Easing.easeInSine,
-		      easeOutSine: Easing.easeOutSine,
-		      easeInOutSine: Easing.easeInOutSine,
-		      easeInExpo: Easing.easeInExpo,
-		      easeOutExpo: Easing.easeOutExpo,
-		      easeInOutExpo: Easing.easeInOutExpo,
-		      easeInCirc: Easing.easeInCirc,
-		      easeOutCirc: Easing.easeOutCirc,
-		      easeInOutCirc: Easing.easeInOutCirc,
-		      easeInElastic: Easing.easeInElastic,
-		      easeOutElastic: Easing.easeOutElastic,
-		      easeInOutElastic: Easing.easeInOutElastic,
-		      easeInBack: Easing.easeInBack,
-		      easeOutBack: Easing.easeOutBack,
-		      easeInOutBack: Easing.easeInOutBack,
-		      easeInBounce: Easing.easeInBounce,
-		      easeOutBounce: Easing.easeOutBounce,
-		      easeInOutBounce: Easing.easeInOutBounce
-		    },
-		    enumerable: true
-		  }, {
-		    key: "animatorType",
-		    value: {
-		      spring: _animatorsSpring2["default"].Type,
-		      springRK4: _animatorsSpringRK42["default"].Type,
-		      friction: _animatorsFriction2["default"].Type,
-		      ease: _animatorsEase2["default"].Type,
-		      cubicBezier: _animatorsCubicBezier2["default"].Type
-		    },
-		    enumerable: true
-		  }]);
-
-		  function MotionTween(options) {
-		    _classCallCheck(this, MotionTween);
-
-		    this._time = null;
-		    this._startX = null;
-		    this._endX = null;
-		    this._lastTime = null;
-		    this._startTime = null;
-		    this._options = {};
-		    this._isAnimating = false;
-		    this._animator = null;
-		    this._x = null;
-
-		    this._init(options);
-		    return this;
-		  }
-
-		  _createClass(MotionTween, [{
-		    key: "start",
-		    value: function start() {
-		      this._start();
-		    }
-		  }, {
-		    key: "destroy",
-		    value: function destroy() {
-		      this._destroy();
-		    }
-		  }, {
-		    key: "_init",
-		    value: function _init(options) {
-		      // Deep merge of default and incoming options
-		      _Utils2["default"].extend(this._options, MotionTween.DEFAULT_OPTIONS, true);
-		      _Utils2["default"].extend(this._options, options, true);
-
-		      // time we can ignore for some of the animators
-		      this._time = this._options.time;
-		      this._startX = this._options.startValue;
-		      this._endX = this._options.endValue;
-		    }
-		  }, {
-		    key: "_start",
-		    value: function _start() {
-		      this._lastTime = 0;
-		      this._startTime = 0;
-
-		      switch (this._options.animatorType) {
-		        case _animatorsSpring2["default"].Type:
-		          this._animator = new _animatorsSpring2["default"](this._options.animatorOptions);
-		          break;
-		        case _animatorsSpringRK42["default"].Type:
-		          this._animator = new _animatorsSpringRK42["default"](this._options.animatorOptions);
-		          break;
-		        case _animatorsFriction2["default"].Type:
-		          this._animator = new _animatorsFriction2["default"](this._options.animatorOptions);
-		          break;
-		        case _animatorsCubicBezier2["default"].Type:
-		          this._animator = new _animatorsCubicBezier2["default"](this._options.animatorOptions);
-		          break;
-		        default:
-		          this._animator = new _animatorsEase2["default"](this._options.animatorOptions);
-		      }
-
-		      this._isAnimating = true;
-		      this._startTime = this._lastTime = new Date().getTime();
-
-		      this._requestionAnimationFrameID = window.requestAnimationFrame(this._tick.bind(this));
-		    }
-		  }, {
-		    key: "_destroy",
-		    value: function _destroy() {
-		      window.cancelAnimationFrame(this._requestionAnimationFrameID);
-		      this._options = null;
-		    }
-		  }, {
-		    key: "_tick",
-		    value: function _tick() {
-		      var now = new Date().getTime();
-
-		      var delta = (now - this._lastTime) / this._time;
-		      this._lastTime = now;
-
-		      // pass in normalised delta
-		      var normalisedAnimatedX = this._animator.step(delta);
-
-		      if (this._animator.isFinished() === false) {
-		        this._x = this._startX + (this._endX - this._startX) * normalisedAnimatedX;
-		        this._options.update(this._x);
-		        this._requestionAnimationFrameID = window.requestAnimationFrame(this._tick.bind(this));
-		      } else {
-		        this._x = this._endX;
-		        this._options.update(this._x);
-		        this._options.complete();
-		        this._isAnimating = false;
-		      }
-		    }
-		  }], [{
-		    key: "getValue",
-		    value: function getValue(animatorType, animatorOptions, time) {
-		      return MotionTween._getValue(animatorType, animatorOptions, time);
-		    }
-		  }, {
-		    key: "_getValue",
-		    value: function _getValue(animatorType, animatorOptions, time) {
-		      switch (animatorType) {
-		        case _animatorsCubicBezier2["default"].Type:
-		          return _animatorsCubicBezier2["default"].getValue(animatorOptions, time);
-		          break;
-		        default:
-		          return _animatorsEase2["default"].getValue(animatorOptions, time);
-		      }
-		    }
-		  }]);
-
-		  return MotionTween;
-		})();
-
-		exports["default"] = MotionTween;
-		module.exports = exports["default"];
+		;
 
 	/***/ },
 	/* 5 */
 	/***/ function(module, exports) {
 
-		'use strict';
-
-		Object.defineProperty(exports, '__esModule', {
-		    value: true
-		});
-
-		var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ('value' in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
-
-		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError('Cannot call a class as a function'); } }
-
-		var Utils = (function () {
-		    function Utils() {
-		        _classCallCheck(this, Utils);
-		    }
-
-		    _createClass(Utils, [{
-		        key: 'extend',
-		        value: function extend(destination, source) {
-		            var isDeep = arguments.length <= 2 || arguments[2] === undefined ? false : arguments[2];
-
-		            var hasDepth = false;
-		            for (var property in source) {
-		                hasDepth = false;
-		                if (isDeep === true && source[property] && source[property].constructor) {
-		                    if (source[property].constructor === Object) {
-		                        hasDepth = true;
-		                        destination[property] = this.extend({}, source[property], true);
-		                    } else if (source[property].constructor === Function) {
-		                        // if (window.console) console.warn("Can't clone, can only reference Functions");
-		                        hasDepth = false;
-		                    }
-		                }
-		                if (hasDepth === false) {
-		                    destination[property] = source[property];
-		                }
-		            }
-		            return destination;
-		        }
-		    }, {
-		        key: 'sum',
-		        value: function sum(arr) {
-		            var sum = 0;
-		            var d = arr.length;
-		            while (d--) {
-		                sum += arr[d];
-		            }
-		            return sum;
-		        }
-		    }]);
-
-		    return Utils;
-		})();
-
-		exports['default'] = new Utils();
-
-		(function () {
-		    var lastTime = 0;
-		    var vendors = ['ms', 'moz', 'webkit', 'o'];
-		    for (var x = 0; x < vendors.length && !window.requestAnimationFrame; ++x) {
-		        window.requestAnimationFrame = window[vendors[x] + 'RequestAnimationFrame'];
-		        window.cancelAnimationFrame = window[vendors[x] + 'CancelAnimationFrame'] || window[vendors[x] + 'CancelRequestAnimationFrame'];
-		    }
-
-		    if (!window.requestAnimationFrame) {
-		        window.requestAnimationFrame = function (callback, element) {
-		            var currTime = new Date().getTime();
-		            var timeToCall = Math.max(0, 16 - (currTime - lastTime));
-		            var id = window.setTimeout(function () {
-		                callback(currTime + timeToCall);
-		            }, timeToCall);
-		            lastTime = currTime + timeToCall;
-		            return id;
-		        };
-		    }
-
-		    if (!window.cancelAnimationFrame) {
-		        window.cancelAnimationFrame = function (id) {
-		            clearTimeout(id);
-		        };
-		    }
-		})();
-		module.exports = exports['default'];
-
-	/***/ },
-	/* 6 */
-	/***/ function(module, exports) {
-
-		// t: current time, b: begInnIng value, c: change In value, d: duration
-		"use strict";
-
-		Object.defineProperty(exports, "__esModule", {
-			value: true
-		});
-		exports.swing = swing;
-		exports.easeInQuad = easeInQuad;
-		exports.easeOutQuad = easeOutQuad;
-		exports.easeInOutQuad = easeInOutQuad;
-		exports.easeInCubic = easeInCubic;
-		exports.easeOutCubic = easeOutCubic;
-		exports.easeInOutCubic = easeInOutCubic;
-		exports.easeInQuart = easeInQuart;
-		exports.easeOutQuart = easeOutQuart;
-		exports.easeInOutQuart = easeInOutQuart;
-		exports.easeInQuint = easeInQuint;
-		exports.easeOutQuint = easeOutQuint;
-		exports.easeInOutQuint = easeInOutQuint;
-		exports.easeInSine = easeInSine;
-		exports.easeOutSine = easeOutSine;
-		exports.easeInOutSine = easeInOutSine;
-		exports.easeInExpo = easeInExpo;
-		exports.easeOutExpo = easeOutExpo;
-		exports.easeInOutExpo = easeInOutExpo;
-		exports.easeInCirc = easeInCirc;
-		exports.easeOutCirc = easeOutCirc;
-		exports.easeInOutCirc = easeInOutCirc;
-		exports.easeInElastic = easeInElastic;
-		exports.easeOutElastic = easeOutElastic;
-		exports.easeInOutElastic = easeInOutElastic;
-		exports.easeInBack = easeInBack;
-		exports.easeOutBack = easeOutBack;
-		exports.easeInOutBack = easeInOutBack;
-		exports.easeInBounce = easeInBounce;
-		exports.easeOutBounce = easeOutBounce;
-		exports.easeInOutBounce = easeInOutBounce;
-
-		function swing(t, b, c, d) {
-			return easeOutQuad(t, b, c, d);
-		}
-
-		function easeInQuad(t, b, c, d) {
-			return c * (t /= d) * t + b;
-		}
-
-		function easeOutQuad(t, b, c, d) {
-			return -c * (t /= d) * (t - 2) + b;
-		}
-
-		function easeInOutQuad(t, b, c, d) {
-			if ((t /= d / 2) < 1) return c / 2 * t * t + b;
-			return -c / 2 * (--t * (t - 2) - 1) + b;
-		}
-
-		function easeInCubic(t, b, c, d) {
-			return c * (t /= d) * t * t + b;
-		}
-
-		function easeOutCubic(t, b, c, d) {
-			return c * ((t = t / d - 1) * t * t + 1) + b;
-		}
-
-		function easeInOutCubic(t, b, c, d) {
-			if ((t /= d / 2) < 1) return c / 2 * t * t * t + b;
-			return c / 2 * ((t -= 2) * t * t + 2) + b;
-		}
-
-		function easeInQuart(t, b, c, d) {
-			return c * (t /= d) * t * t * t + b;
-		}
-
-		function easeOutQuart(t, b, c, d) {
-			return -c * ((t = t / d - 1) * t * t * t - 1) + b;
-		}
-
-		function easeInOutQuart(t, b, c, d) {
-			if ((t /= d / 2) < 1) return c / 2 * t * t * t * t + b;
-			return -c / 2 * ((t -= 2) * t * t * t - 2) + b;
-		}
-
-		function easeInQuint(t, b, c, d) {
-			return c * (t /= d) * t * t * t * t + b;
-		}
-
-		function easeOutQuint(t, b, c, d) {
-			return c * ((t = t / d - 1) * t * t * t * t + 1) + b;
-		}
-
-		function easeInOutQuint(t, b, c, d) {
-			if ((t /= d / 2) < 1) return c / 2 * t * t * t * t * t + b;
-			return c / 2 * ((t -= 2) * t * t * t * t + 2) + b;
-		}
-
-		function easeInSine(t, b, c, d) {
-			return -c * Math.cos(t / d * (Math.PI / 2)) + c + b;
-		}
-
-		function easeOutSine(t, b, c, d) {
-			return c * Math.sin(t / d * (Math.PI / 2)) + b;
-		}
-
-		function easeInOutSine(t, b, c, d) {
-			return -c / 2 * (Math.cos(Math.PI * t / d) - 1) + b;
-		}
-
-		function easeInExpo(t, b, c, d) {
-			return t == 0 ? b : c * Math.pow(2, 10 * (t / d - 1)) + b;
-		}
-
-		function easeOutExpo(t, b, c, d) {
-			return t == d ? b + c : c * (-Math.pow(2, -10 * t / d) + 1) + b;
-		}
-
-		function easeInOutExpo(t, b, c, d) {
-			if (t == 0) return b;
-			if (t == d) return b + c;
-			if ((t /= d / 2) < 1) return c / 2 * Math.pow(2, 10 * (t - 1)) + b;
-			return c / 2 * (-Math.pow(2, -10 * --t) + 2) + b;
-		}
-
-		function easeInCirc(t, b, c, d) {
-			return -c * (Math.sqrt(1 - (t /= d) * t) - 1) + b;
-		}
-
-		function easeOutCirc(t, b, c, d) {
-			return c * Math.sqrt(1 - (t = t / d - 1) * t) + b;
-		}
-
-		function easeInOutCirc(t, b, c, d) {
-			if ((t /= d / 2) < 1) return -c / 2 * (Math.sqrt(1 - t * t) - 1) + b;
-			return c / 2 * (Math.sqrt(1 - (t -= 2) * t) + 1) + b;
-		}
-
-		function easeInElastic(t, b, c, d) {
-			var s = 1.70158;var p = 0;var a = c;
-			if (t == 0) return b;if ((t /= d) == 1) return b + c;if (!p) p = d * .3;
-			if (a < Math.abs(c)) {
-				a = c;var s = p / 4;
-			} else var s = p / (2 * Math.PI) * Math.asin(c / a);
-			return -(a * Math.pow(2, 10 * (t -= 1)) * Math.sin((t * d - s) * (2 * Math.PI) / p)) + b;
-		}
-
-		function easeOutElastic(t, b, c, d) {
-			var s = 1.70158;var p = 0;var a = c;
-			if (t == 0) return b;if ((t /= d) == 1) return b + c;if (!p) p = d * .3;
-			if (a < Math.abs(c)) {
-				a = c;var s = p / 4;
-			} else var s = p / (2 * Math.PI) * Math.asin(c / a);
-			return a * Math.pow(2, -10 * t) * Math.sin((t * d - s) * (2 * Math.PI) / p) + c + b;
-		}
-
-		function easeInOutElastic(t, b, c, d) {
-			var s = 1.70158;var p = 0;var a = c;
-			if (t == 0) return b;if ((t /= d / 2) == 2) return b + c;if (!p) p = d * (.3 * 1.5);
-			if (a < Math.abs(c)) {
-				a = c;var s = p / 4;
-			} else var s = p / (2 * Math.PI) * Math.asin(c / a);
-			if (t < 1) return -.5 * (a * Math.pow(2, 10 * (t -= 1)) * Math.sin((t * d - s) * (2 * Math.PI) / p)) + b;
-			return a * Math.pow(2, -10 * (t -= 1)) * Math.sin((t * d - s) * (2 * Math.PI) / p) * .5 + c + b;
-		}
-
-		function easeInBack(t, b, c, d, s) {
-			if (s == undefined) s = 1.70158;
-			return c * (t /= d) * t * ((s + 1) * t - s) + b;
-		}
-
-		function easeOutBack(t, b, c, d, s) {
-			if (s == undefined) s = 1.70158;
-			return c * ((t = t / d - 1) * t * ((s + 1) * t + s) + 1) + b;
-		}
-
-		function easeInOutBack(t, b, c, d, s) {
-			if (s == undefined) s = 1.70158;
-			if ((t /= d / 2) < 1) return c / 2 * (t * t * (((s *= 1.525) + 1) * t - s)) + b;
-			return c / 2 * ((t -= 2) * t * (((s *= 1.525) + 1) * t + s) + 2) + b;
-		}
-
-		function easeInBounce(t, b, c, d) {
-			return c - easeOutBounce(d - t, 0, c, d) + b;
-		}
-
-		function easeOutBounce(t, b, c, d) {
-			if ((t /= d) < 1 / 2.75) {
-				return c * (7.5625 * t * t) + b;
-			} else if (t < 2 / 2.75) {
-				return c * (7.5625 * (t -= 1.5 / 2.75) * t + .75) + b;
-			} else if (t < 2.5 / 2.75) {
-				return c * (7.5625 * (t -= 2.25 / 2.75) * t + .9375) + b;
-			} else {
-				return c * (7.5625 * (t -= 2.625 / 2.75) * t + .984375) + b;
-			}
-		}
-
-		function easeInOutBounce(t, b, c, d) {
-			if (t < d / 2) return easeInBounce(t * 2, 0, c, d) * .5 + b;
-			return easeOutBounce(t * 2 - d, 0, c, d) * .5 + c * .5 + b;
-		}
-
-	/***/ },
-	/* 7 */
-	/***/ function(module, exports) {
-
-		"use strict";
-
-		Object.defineProperty(exports, "__esModule", {
-		  value: true
-		});
-
-		var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
-
-		var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
-
-		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
-
-		var CubicBezier = (function () {
-		  _createClass(CubicBezier, null, [{
-		    key: "DEFAULT_OPTIONS",
-		    value: {
-		      tolerance: 0.001,
-		      controlPoints: [.15, .66, .83, .67]
-		    },
-		    enumerable: true
-		  }, {
-		    key: "Type",
-		    value: "CubicBezier",
-		    enumerable: true
-		  }]);
-
-		  function CubicBezier(options) {
-		    _classCallCheck(this, CubicBezier);
-
-		    // merge default with passed
-		    this._options = _extends({}, CubicBezier.DEFAULT_OPTIONS, options);
-
-		    this._x = 0;
-		    this._time = 0;
-		  }
-
-		  _createClass(CubicBezier, [{
-		    key: "step",
-		    value: function step(delta) {
-		      // t: current time, b: begInnIng value, c: change In value, d: duration
-		      this._time += delta;
-		      this._x = CubicBezier._getPointOnBezierCurve(this._options.controlPoints, this._time);
-		      return this._x;
-		    }
-		  }, {
-		    key: "isFinished",
-		    value: function isFinished() {
-		      return this._time >= 1;
-		    }
-		  }], [{
-		    key: "getValue",
-		    value: function getValue(options, time) {
-		      return CubicBezier._getPointOnBezierCurve(options.controlPoints, time);
-		    }
-		  }, {
-		    key: "_getPointOnBezierCurve",
-		    value: function _getPointOnBezierCurve(controlPoints, l) {
-		      var a1 = { x: 0, y: 0 };
-		      var a2 = { x: 1, y: 1 };
-
-		      var c1 = { x: controlPoints[0], y: controlPoints[1] };
-		      var c2 = { x: controlPoints[2], y: controlPoints[3] };
-
-		      var b1 = CubicBezier._interpolate(a1, c1, l);
-		      var b2 = CubicBezier._interpolate(c1, c2, l);
-		      var b3 = CubicBezier._interpolate(c2, a2, l);
-
-		      c1 = CubicBezier._interpolate(b1, b2, l);
-		      c2 = CubicBezier._interpolate(b2, b3, l);
-
-		      return CubicBezier._interpolate(c1, c2, l).y;
-		    }
-		  }, {
-		    key: "_interpolate",
-		    value: function _interpolate(p1, p2, l) {
-		      var p3 = {};
-
-		      p3.x = p1.x + (p2.x - p1.x) * l;
-		      p3.y = p1.y + (p2.y - p1.y) * l;
-
-		      return p3;
-		    }
-		  }]);
-
-		  return CubicBezier;
-		})();
-
-		exports["default"] = CubicBezier;
-		module.exports = exports["default"];
-
-	/***/ },
-	/* 8 */
-	/***/ function(module, exports, __webpack_require__) {
-
-		"use strict";
-
-		Object.defineProperty(exports, "__esModule", {
-		  value: true
-		});
-
-		var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
-
-		var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
-
-		function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key]; } } newObj["default"] = obj; return newObj; } }
-
-		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
-
-		var _Easing = __webpack_require__(6);
-
-		var Easing = _interopRequireWildcard(_Easing);
-
-		var Ease = (function () {
-		  _createClass(Ease, null, [{
-		    key: "DEFAULT_OPTIONS",
-		    value: {
-		      tolerance: 0.001,
-		      easingFunction: Easing.easeOutQuad
-		    },
-		    enumerable: true
-		  }, {
-		    key: "Type",
-		    value: "Ease",
-		    enumerable: true
-		  }]);
-
-		  function Ease(options) {
-		    _classCallCheck(this, Ease);
-
-		    // merge default with passed
-		    this._options = _extends({}, Ease.DEFAULT_OPTIONS, options);
-
-		    this._x = 0;
-		    this._time = 0;
-		  }
-
-		  _createClass(Ease, [{
-		    key: "step",
-		    value: function step(delta) {
-		      // t: current time, b: begInnIng value, c: change In value, d: duration
-		      this._time += delta;
-		      this._x = this._options.easingFunction(this._time, 0, 1, 1);
-		      return this._x;
-		    }
-		  }, {
-		    key: "isFinished",
-		    value: function isFinished() {
-		      return this._time >= 1;
-		    }
-		  }], [{
-		    key: "getValue",
-		    value: function getValue(options, time) {
-		      return options.easingFunction(time, 0, 1, 1);
-		    }
-		  }]);
-
-		  return Ease;
-		})();
-
-		exports["default"] = Ease;
-		module.exports = exports["default"];
-
-	/***/ },
-	/* 9 */
-	/***/ function(module, exports) {
-
-		"use strict";
-
-		Object.defineProperty(exports, "__esModule", {
-		  value: true
-		});
-
-		var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
-
-		var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
-
-		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
-
-		var Friction = (function () {
-		  _createClass(Friction, null, [{
-		    key: "DEFAULT_OPTIONS",
-		    value: {
-		      applyAcceleration: function applyAcceleration(accel) {
-		        return accel;
-		      },
-		      friction: 0.1,
-		      destination: 1,
-		      tolerance: 0.001
-		    },
-		    enumerable: true
-		  }, {
-		    key: "Type",
-		    value: "FRICTION",
-		    enumerable: true
-		  }]);
-
-		  function Friction(options) {
-		    _classCallCheck(this, Friction);
-
-		    // merge default with passed
-		    this._options = _extends({}, Friction.DEFAULT_OPTIONS, options);
-		    this._v = 0;
-		    this._x = 0;
-		    this._acceleration = (this._options.destination - this._x) * this._options.friction;
-		    this._previousX = 0;
-		  }
-
-		  _createClass(Friction, [{
-		    key: "step",
-		    value: function step(delta) {
-		      // delta is ignored in the FrictionAnimator
-		      this._acceleration = this._options.applyAcceleration(this._acceleration);
-
-		      this._v += this._acceleration;
-		      this._x += this._v;
-		      this._v *= 1 - this._options.friction;
-
-		      // reset the acceleration as this is set initially
-		      this._acceleration = 0;
-		      this._previousX = this._x;
-
-		      return this._x;
-		    }
-		  }, {
-		    key: "isFinished",
-		    value: function isFinished() {
-		      return Math.round(this._v / this._options.tolerance) === 0 && Math.round(this._x / this._options.tolerance) === 1 / this._options.tolerance ? true : false;
-		    }
-		  }]);
-
-		  return Friction;
-		})();
-
-		exports["default"] = Friction;
-		module.exports = exports["default"];
-
-	/***/ },
-	/* 10 */
-	/***/ function(module, exports) {
-
-		"use strict";
-
-		Object.defineProperty(exports, "__esModule", {
-		  value: true
-		});
-
-		var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
-
-		var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
-
-		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
-
-		var Spring = (function () {
-		  _createClass(Spring, null, [{
-		    key: "DEFAULT_OPTIONS",
-		    value: {
-		      stiffness: 100,
-		      damping: 20,
-		      tolerance: 0.001
-		    },
-		    enumerable: true
-		  }, {
-		    key: "Type",
-		    value: "SPRING",
-		    enumerable: true
-		  }]);
-
-		  function Spring(options) {
-		    _classCallCheck(this, Spring);
-
-		    // merge default with passed
-		    this._options = _extends({}, Spring.DEFAULT_OPTIONS, options);
-
-		    this._v = 0;
-		    this._x = 0;
-		  }
-
-		  _createClass(Spring, [{
-		    key: "step",
-		    value: function step(delta) {
-		      var k = 0 - this._options.stiffness;
-		      var b = 0 - this._options.damping;
-
-		      var F_spring = k * (this._x - 1);
-		      var F_damper = b * this._v;
-
-		      var mass = 1;
-
-		      this._v += (F_spring + F_damper) / mass * delta;
-		      this._x += this._v * delta;
-
-		      return this._x;
-		    }
-		  }, {
-		    key: "isFinished",
-		    value: function isFinished() {
-		      return Math.round(this._v / this._options.tolerance) === 0 && Math.round(this._x / this._options.tolerance) === 1 / this._options.tolerance ? true : false;
-		    }
-		  }]);
-
-		  return Spring;
-		})();
-
-		exports["default"] = Spring;
-		module.exports = exports["default"];
-
-	/***/ },
-	/* 11 */
-	/***/ function(module, exports) {
-
-		// r4k from http://mtdevans.com/2013/05/fourth-order-runge-kutta-algorithm-in-javascript-with-demo/
-		"use strict";
-
-		Object.defineProperty(exports, "__esModule", {
-		  value: true
-		});
-
-		var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
-
-		var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
-
-		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
-
-		var SpringRK4 = (function () {
-		  _createClass(SpringRK4, null, [{
-		    key: "DEFAULT_OPTIONS",
-		    value: {
-		      stiffness: 100,
-		      damping: 20,
-		      tolerance: 0.001
-		    },
-		    enumerable: true
-		  }, {
-		    key: "Type",
-		    value: "SPRINGRK4",
-		    enumerable: true
-		  }]);
-
-		  function SpringRK4(options) {
-		    _classCallCheck(this, SpringRK4);
-
-		    // merge default with passed
-		    this._options = _extends({}, SpringRK4.DEFAULT_OPTIONS, options);
-
-		    // set position to 1 as we are wanting the result normalised
-		    this._state = {
-		      x: 1,
-		      v: 0
-		    };
-		  }
-
-		  _createClass(SpringRK4, [{
-		    key: "_rk4",
-		    value: function _rk4(state, a, dt) {
-		      var x = state.x;
-		      var v = state.v;
-		      // Returns final (position, velocity) array after time dt has passed.
-		      //        x: initial position
-		      //        v: initial velocity
-		      //        a: acceleration function a(x,v,dt) (must be callable)
-		      //        dt: timestep
-		      var x1 = x;
-		      var v1 = v;
-		      var a1 = a(x1, v1, 0);
-
-		      var x2 = x + 0.5 * v1 * dt;
-		      var v2 = v + 0.5 * a1 * dt;
-		      var a2 = a(x2, v2, dt / 2);
-
-		      var x3 = x + 0.5 * v2 * dt;
-		      var v3 = v + 0.5 * a2 * dt;
-		      var a3 = a(x3, v3, dt / 2);
-
-		      var x4 = x + v3 * dt;
-		      var v4 = v + a3 * dt;
-		      var a4 = a(x4, v4, dt);
-
-		      var xf = x + dt / 6 * (v1 + 2 * v2 + 2 * v3 + v4);
-		      var vf = v + dt / 6 * (a1 + 2 * a2 + 2 * a3 + a4);
-
-		      return {
-		        x: xf,
-		        v: vf
-		      };
-		    }
-		  }, {
-		    key: "_acceleration",
-		    value: function _acceleration(x, v, dt) {
-		      // This particular one models a spring with a 1kg mass
-		      return -this._options.stiffness * x - this._options.damping * v;
-		    }
-		  }, {
-		    key: "step",
-		    value: function step(delta) {
-		      this._state = this._rk4(this._state, this._acceleration.bind(this), delta);
-		      // the calculation gives values starting from 1 and then finishing at 0,
-		      // we need to transform the values to work from 0 to 1.
-		      return (this._state.x - 1) * -1;
-		    }
-		  }, {
-		    key: "isFinished",
-		    value: function isFinished() {
-		      return Math.round(this._state.v / this._options.tolerance) === 0 && Math.round(this._state.x / this._options.tolerance) === 0 ? true : false;
-		    }
-		  }]);
-
-		  return SpringRK4;
-		})();
-
-		exports["default"] = SpringRK4;
-		module.exports = exports["default"];
-
-	/***/ },
-	/* 12 */
-	/***/ function(module, exports) {
-
 		"use strict";
 
 		Object.defineProperty(exports, "__esModule", {
@@ -9376,34 +9615,24 @@
 
 		var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
 
-		var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
+		var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
 
 		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 
 		var _DEFAULT_OPTIONS = {
 			loop: false,
-			"in": 0,
+			in: 0,
 			out: null,
 			fillMode: 0
 		};
 
-		var TimelineAbstract = (function () {
-			_createClass(TimelineAbstract, null, [{
-				key: "FILL_MODE",
-				value: {
-					NOME: 0,
-					FORWARD: 1,
-					BACKWARD: 2,
-					BOTH: 3
-				},
-				enumerable: true
-			}]);
-
+		var TimelineAbstract = function () {
 			function TimelineAbstract(name, options) {
 				_classCallCheck(this, TimelineAbstract);
 
 				this._options = null;
 				this._name = null;
+
 
 				this._init(name, options);
 			}
@@ -9419,6 +9648,7 @@
 				}
 			}, {
 				key: "_init",
+
 
 				/*________________________________________________________
 		  	PRIVATE CLASS METHODS
@@ -9444,31 +9674,32 @@
 		   *
 		   * @private
 		   */
+
 			}, {
 				key: "_updateRelativeDuration",
 				value: function _updateRelativeDuration(absoluteDuration) {
 					var inIndex = -1;
 					var duration = absoluteDuration;
 
-					if (this._options["in"] == null) {
-						this._options["in"] = 0;
+					if (this._options.in == null) {
+						this._options.in = 0;
 					} else {
 						// adjust the duration
-						if (this._options["in"] > duration) {
+						if (this._options.in > duration) {
 							throw Error("In point is set beyond the end of the tween!");
 						}
-						duration -= this._options["in"];
+						duration -= this._options.in;
 					}
 
 					if (this._options.out != null) {
-						duration = this._options.out - this._options["in"];
+						duration = this._options.out - this._options.in;
 					} else {
-						this._options.out = this._options["in"] + duration;
+						this._options.out = this._options.in + duration;
 					}
 
 					this._duration = duration;
 
-					if (this._options["in"] > this._options.out) {
+					if (this._options.in > this._options.out) {
 						throw Error("tween in is greater than out!");
 					}
 				}
@@ -9480,10 +9711,11 @@
 		   * @param {Number} time Time in milisecond
 		   * @return Number
 		   */
+
 			}, {
 				key: "_loopTime",
 				value: function _loopTime(time) {
-					return ((time - this._options["in"]) % this._duration + this._duration) % this._duration;
+					return ((time - this._options.in) % this._duration + this._duration) % this._duration;
 				}
 
 				/**
@@ -9493,10 +9725,11 @@
 		   * @param {Number} time Time in milisecond
 		   * @return Number
 		   */
+
 			}, {
 				key: "_resolveTime",
 				value: function _resolveTime(time) {
-					if (time < this._options["in"]) {
+					if (time < this._options.in) {
 						if (this._options.fillMode === TimelineAbstract.FILL_MODE.BACKWARD || this._options.fillMode === TimelineAbstract.FILL_MODE.BOTH) {
 							if (this._options.loop) {
 								return this._loopTime(time);
@@ -9527,7 +9760,7 @@
 			}, {
 				key: "in",
 				get: function get() {
-					return this._options["in"];
+					return this._options.in;
 				}
 			}, {
 				key: "out",
@@ -9547,43 +9780,50 @@
 			}]);
 
 			return TimelineAbstract;
-		})();
+		}();
 
-		exports["default"] = TimelineAbstract;
-		module.exports = exports["default"];
+		TimelineAbstract.FILL_MODE = {
+			NOME: 0,
+			FORWARD: 1,
+			BACKWARD: 2,
+			BOTH: 3
+		};
+		exports.default = TimelineAbstract;
 
 	/***/ },
-	/* 13 */
+	/* 6 */
 	/***/ function(module, exports, __webpack_require__) {
 
 		'use strict';
 
-		Object.defineProperty(exports, '__esModule', {
+		Object.defineProperty(exports, "__esModule", {
 			value: true
 		});
 
-		var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ('value' in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
-
-		var _get = function get(_x, _x2, _x3) { var _again = true; _function: while (_again) { var object = _x, property = _x2, receiver = _x3; _again = false; if (object === null) object = Function.prototype; var desc = Object.getOwnPropertyDescriptor(object, property); if (desc === undefined) { var parent = Object.getPrototypeOf(object); if (parent === null) { return undefined; } else { _x = parent; _x2 = property; _x3 = receiver; _again = true; desc = parent = undefined; continue _function; } } else if ('value' in desc) { return desc.value; } else { var getter = desc.get; if (getter === undefined) { return undefined; } return getter.call(receiver); } } };
-
-		function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { 'default': obj }; }
-
-		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError('Cannot call a class as a function'); } }
-
-		function _inherits(subClass, superClass) { if (typeof superClass !== 'function' && superClass !== null) { throw new TypeError('Super expression must either be null or a function, not ' + typeof superClass); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } }); if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass; }
+		var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
 
 		var _timeline = __webpack_require__(1);
 
 		var _timeline2 = _interopRequireDefault(_timeline);
 
-		var InteractiveTimeline = (function (_Timeline) {
+		function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+
+		function _possibleConstructorReturn(self, call) { if (!self) { throw new ReferenceError("this hasn't been initialised - super() hasn't been called"); } return call && (typeof call === "object" || typeof call === "function") ? call : self; }
+
+		function _inherits(subClass, superClass) { if (typeof superClass !== "function" && superClass !== null) { throw new TypeError("Super expression must either be null or a function, not " + typeof superClass); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } }); if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass; }
+
+		var InteractiveTimeline = function (_Timeline) {
 			_inherits(InteractiveTimeline, _Timeline);
 
 			function InteractiveTimeline(name, options) {
 				_classCallCheck(this, InteractiveTimeline);
 
-				_get(Object.getPrototypeOf(InteractiveTimeline.prototype), 'constructor', this).call(this, name, options);
-				this._sequences = [];
+				var _this = _possibleConstructorReturn(this, Object.getPrototypeOf(InteractiveTimeline).call(this, name, options));
+
+				_this._sequences = [];
+				return _this;
 			}
 
 			/*________________________________________________________
@@ -9613,8 +9853,8 @@
 			}, {
 				key: '_increment',
 				value: function _increment(timeDelta) {
-					var outDelta = undefined,
-					    sequenceOutTime = undefined;
+					var outDelta = void 0,
+					    sequenceOutTime = void 0;
 
 					// get current sequence
 					var currentSequence = this._getSequenceByTime(this._currentTime);
@@ -9674,7 +9914,7 @@
 			}, {
 				key: '_getSequenceByTime',
 				value: function _getSequenceByTime(time) {
-					var sequence = undefined;
+					var sequence = void 0;
 
 					for (var i = 0; i < this._sequences.length; i++) {
 						if (this._sequences[i].time > time) {
@@ -9707,10 +9947,9 @@
 			}]);
 
 			return InteractiveTimeline;
-		})(_timeline2['default']);
+		}(_timeline2.default);
 
-		exports['default'] = InteractiveTimeline;
-		module.exports = exports['default'];
+		exports.default = InteractiveTimeline;
 
 	/***/ }
 	/******/ ])
@@ -9723,8 +9962,8 @@
 
 	var require;var require;/* WEBPACK VAR INJECTION */(function(global, setImmediate) {/**
 	 * @license
-	 * pixi.js - v3.0.9
-	 * Compiled 2015-12-22T18:28:46.266Z
+	 * pixi.js - v3.0.10
+	 * Compiled 2016-03-31T20:39:38.722Z
 	 *
 	 * pixi.js is licensed under the MIT License.
 	 * http://www.opensource.org/licenses/mit-license.php
@@ -10268,7 +10507,7 @@
 	    };
 
 	    async.auto = function (tasks, concurrency, callback) {
-	        if (!callback) {
+	        if (typeof arguments[1] === 'function') {
 	            // concurrency is optional, shift the args.
 	            callback = concurrency;
 	            concurrency = null;
@@ -10285,6 +10524,8 @@
 
 	        var results = {};
 	        var runningTasks = 0;
+
+	        var hasError = false;
 
 	        var listeners = [];
 	        function addListener(fn) {
@@ -10308,6 +10549,7 @@
 	        });
 
 	        _arrayEach(keys, function (k) {
+	            if (hasError) return;
 	            var task = _isArray(tasks[k]) ? tasks[k]: [tasks[k]];
 	            var taskCallback = _restParam(function(err, args) {
 	                runningTasks--;
@@ -10320,6 +10562,8 @@
 	                        safeResults[rkey] = val;
 	                    });
 	                    safeResults[k] = args;
+	                    hasError = true;
+
 	                    callback(err, safeResults);
 	                }
 	                else {
@@ -10333,7 +10577,7 @@
 	            var dep;
 	            while (len--) {
 	                if (!(dep = tasks[requires[len]])) {
-	                    throw new Error('Has inexistant dependency');
+	                    throw new Error('Has nonexistent dependency in ' + requires.join(', '));
 	                }
 	                if (_isArray(dep) && _indexOf(dep, k) >= 0) {
 	                    throw new Error('Has cyclic dependencies');
@@ -10539,7 +10783,7 @@
 	                } else if (test.apply(this, args)) {
 	                    iterator(next);
 	                } else {
-	                    callback(null);
+	                    callback.apply(null, [null].concat(args));
 	                }
 	            });
 	            iterator(next);
@@ -10687,24 +10931,23 @@
 	                _insert(q, data, true, callback);
 	            },
 	            process: function () {
-	                if (!q.paused && workers < q.concurrency && q.tasks.length) {
-	                    while(workers < q.concurrency && q.tasks.length){
-	                        var tasks = q.payload ?
-	                            q.tasks.splice(0, q.payload) :
-	                            q.tasks.splice(0, q.tasks.length);
+	                while(!q.paused && workers < q.concurrency && q.tasks.length){
 
-	                        var data = _map(tasks, function (task) {
-	                            return task.data;
-	                        });
+	                    var tasks = q.payload ?
+	                        q.tasks.splice(0, q.payload) :
+	                        q.tasks.splice(0, q.tasks.length);
 
-	                        if (q.tasks.length === 0) {
-	                            q.empty();
-	                        }
-	                        workers += 1;
-	                        workersList.push(tasks[0]);
-	                        var cb = only_once(_next(q, tasks));
-	                        worker(data, cb);
+	                    var data = _map(tasks, function (task) {
+	                        return task.data;
+	                    });
+
+	                    if (q.tasks.length === 0) {
+	                        q.empty();
 	                    }
+	                    workers += 1;
+	                    workersList.push(tasks[0]);
+	                    var cb = only_once(_next(q, tasks));
+	                    worker(data, cb);
 	                }
 	            },
 	            length: function () {
@@ -10839,16 +11082,17 @@
 	    async.memoize = function (fn, hasher) {
 	        var memo = {};
 	        var queues = {};
+	        var has = Object.prototype.hasOwnProperty;
 	        hasher = hasher || identity;
 	        var memoized = _restParam(function memoized(args) {
 	            var callback = args.pop();
 	            var key = hasher.apply(null, args);
-	            if (key in memo) {
+	            if (has.call(memo, key)) {   
 	                async.setImmediate(function () {
 	                    callback.apply(null, memo[key]);
 	                });
 	            }
-	            else if (key in queues) {
+	            else if (has.call(queues, key)) {
 	                queues[key].push(callback);
 	            }
 	            else {
@@ -11018,7 +11262,6 @@
 	}());
 
 	}).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-
 	},{"_process":3}],2:[function(require,module,exports){
 	(function (process){
 	// Copyright Joyent, Inc. and other Node contributors.
@@ -11247,7 +11490,6 @@
 	;
 
 	}).call(this,require('_process'))
-
 	},{"_process":3}],3:[function(require,module,exports){
 	// shim for using process in browser
 
@@ -11343,7 +11585,7 @@
 
 	},{}],4:[function(require,module,exports){
 	(function (global){
-	/*! https://mths.be/punycode v1.3.2 by @mathias */
+	/*! https://mths.be/punycode v1.4.0 by @mathias */
 	;(function(root) {
 
 		/** Detect free variables */
@@ -11409,7 +11651,7 @@
 		 * @returns {Error} Throws a `RangeError` with the applicable error message.
 		 */
 		function error(type) {
-			throw RangeError(errors[type]);
+			throw new RangeError(errors[type]);
 		}
 
 		/**
@@ -11556,7 +11798,7 @@
 
 		/**
 		 * Bias adaptation function as per section 3.4 of RFC 3492.
-		 * http://tools.ietf.org/html/rfc3492#section-3.4
+		 * https://tools.ietf.org/html/rfc3492#section-3.4
 		 * @private
 		 */
 		function adapt(delta, numPoints, firstTime) {
@@ -11861,21 +12103,23 @@
 				return punycode;
 			});
 		} else if (freeExports && freeModule) {
-			if (module.exports == freeExports) { // in Node.js or RingoJS v0.8.0+
+			if (module.exports == freeExports) {
+				// in Node.js, io.js, or RingoJS v0.8.0+
 				freeModule.exports = punycode;
-			} else { // in Narwhal or RingoJS v0.7.0-
+			} else {
+				// in Narwhal or RingoJS v0.7.0-
 				for (key in punycode) {
 					punycode.hasOwnProperty(key) && (freeExports[key] = punycode[key]);
 				}
 			}
-		} else { // in Rhino or a web browser
+		} else {
+			// in Rhino or a web browser
 			root.punycode = punycode;
 		}
 
 	}(this));
 
 	}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-
 	},{}],5:[function(require,module,exports){
 	// Copyright Joyent, Inc. and other Node contributors.
 	//
@@ -13077,6 +13321,8 @@
 
 	    if (!m) return null;
 
+	    if (hole.x === m.x) return m.prev; // hole touches outer segment; pick lower endpoint
+
 	    // look for points inside the triangle of hole point, segment intersection and endpoint;
 	    // if there are no points found, we have a valid connection;
 	    // otherwise choose the point of the minimum angle with the ray as connection point
@@ -13654,81 +13900,2555 @@
 	};
 
 	},{}],12:[function(require,module,exports){
-	module.exports={
-	  "name": "pixi.js",
-	  "version": "3.0.9",
-	  "description": "Pixi.js is a fast lightweight 2D library that works across all devices.",
-	  "author": "Mat Groves",
-	  "contributors": [
-	    "Chad Engler <chad@pantherdev.com>",
-	    "Richard Davey <rdavey@gmail.com>"
-	  ],
-	  "main": "./src/index.js",
-	  "homepage": "http://goodboydigital.com/",
-	  "bugs": "https://github.com/pixijs/pixi.js/issues",
-	  "license": "MIT",
-	  "repository": {
-	    "type": "git",
-	    "url": "https://github.com/pixijs/pixi.js.git"
-	  },
-	  "scripts": {
-	    "start": "gulp && gulp watch",
-	    "test": "gulp && testem ci",
-	    "build": "gulp",
-	    "docs": "jsdoc -c ./gulp/util/jsdoc.conf.json -R README.md"
-	  },
-	  "files": [
-	    "bin/",
-	    "src/",
-	    "CONTRIBUTING.md",
-	    "LICENSE",
-	    "package.json",
-	    "README.md"
-	  ],
-	  "dependencies": {
-	    "async": "^1.5.0",
-	    "brfs": "^1.4.1",
-	    "earcut": "^2.0.7",
-	    "eventemitter3": "^1.1.1",
-	    "object-assign": "^4.0.1",
-	    "resource-loader": "^1.6.4"
-	  },
-	  "devDependencies": {
-	    "browserify": "^11.1.0",
-	    "chai": "^3.2.0",
-	    "del": "^2.0.2",
-	    "gulp": "^3.9.0",
-	    "gulp-cached": "^1.1.0",
-	    "gulp-concat": "^2.6.0",
-	    "gulp-debug": "^2.1.0",
-	    "gulp-header": "^1.7.1",
-	    "gulp-jshint": "^1.11.2",
-	    "gulp-mirror": "^0.4.0",
-	    "gulp-plumber": "^1.0.1",
-	    "gulp-rename": "^1.2.2",
-	    "gulp-sourcemaps": "^1.5.2",
-	    "gulp-uglify": "^1.4.1",
-	    "gulp-util": "^3.0.6",
-	    "jaguarjs-jsdoc": "git+https://github.com/davidshimjs/jaguarjs-jsdoc.git",
-	    "jsdoc": "^3.3.2",
-	    "jshint-summary": "^0.4.0",
-	    "minimist": "^1.2.0",
-	    "mocha": "^2.3.2",
-	    "require-dir": "^0.3.0",
-	    "run-sequence": "^1.1.2",
-	    "testem": "^0.9.4",
-	    "vinyl-buffer": "^1.0.0",
-	    "vinyl-source-stream": "^1.1.0",
-	    "watchify": "^3.4.0"
-	  },
-	  "browserify": {
-	    "transform": [
-	      "brfs"
-	    ]
-	  }
+	(function (process){
+	/*!
+	 * async
+	 * https://github.com/caolan/async
+	 *
+	 * Copyright 2010-2014 Caolan McMahon
+	 * Released under the MIT license
+	 */
+	/*jshint onevar: false, indent:4 */
+	/*global setImmediate: false, setTimeout: false, console: false */
+	(function () {
+
+	    var async = {};
+
+	    // global on the server, window in the browser
+	    var root, previous_async;
+
+	    root = this;
+	    if (root != null) {
+	      previous_async = root.async;
+	    }
+
+	    async.noConflict = function () {
+	        root.async = previous_async;
+	        return async;
+	    };
+
+	    function only_once(fn) {
+	        var called = false;
+	        return function() {
+	            if (called) throw new Error("Callback was already called.");
+	            called = true;
+	            fn.apply(root, arguments);
+	        }
+	    }
+
+	    //// cross-browser compatiblity functions ////
+
+	    var _toString = Object.prototype.toString;
+
+	    var _isArray = Array.isArray || function (obj) {
+	        return _toString.call(obj) === '[object Array]';
+	    };
+
+	    var _each = function (arr, iterator) {
+	        for (var i = 0; i < arr.length; i += 1) {
+	            iterator(arr[i], i, arr);
+	        }
+	    };
+
+	    var _map = function (arr, iterator) {
+	        if (arr.map) {
+	            return arr.map(iterator);
+	        }
+	        var results = [];
+	        _each(arr, function (x, i, a) {
+	            results.push(iterator(x, i, a));
+	        });
+	        return results;
+	    };
+
+	    var _reduce = function (arr, iterator, memo) {
+	        if (arr.reduce) {
+	            return arr.reduce(iterator, memo);
+	        }
+	        _each(arr, function (x, i, a) {
+	            memo = iterator(memo, x, i, a);
+	        });
+	        return memo;
+	    };
+
+	    var _keys = function (obj) {
+	        if (Object.keys) {
+	            return Object.keys(obj);
+	        }
+	        var keys = [];
+	        for (var k in obj) {
+	            if (obj.hasOwnProperty(k)) {
+	                keys.push(k);
+	            }
+	        }
+	        return keys;
+	    };
+
+	    //// exported async module functions ////
+
+	    //// nextTick implementation with browser-compatible fallback ////
+	    if (typeof process === 'undefined' || !(process.nextTick)) {
+	        if (typeof setImmediate === 'function') {
+	            async.nextTick = function (fn) {
+	                // not a direct alias for IE10 compatibility
+	                setImmediate(fn);
+	            };
+	            async.setImmediate = async.nextTick;
+	        }
+	        else {
+	            async.nextTick = function (fn) {
+	                setTimeout(fn, 0);
+	            };
+	            async.setImmediate = async.nextTick;
+	        }
+	    }
+	    else {
+	        async.nextTick = process.nextTick;
+	        if (typeof setImmediate !== 'undefined') {
+	            async.setImmediate = function (fn) {
+	              // not a direct alias for IE10 compatibility
+	              setImmediate(fn);
+	            };
+	        }
+	        else {
+	            async.setImmediate = async.nextTick;
+	        }
+	    }
+
+	    async.each = function (arr, iterator, callback) {
+	        callback = callback || function () {};
+	        if (!arr.length) {
+	            return callback();
+	        }
+	        var completed = 0;
+	        _each(arr, function (x) {
+	            iterator(x, only_once(done) );
+	        });
+	        function done(err) {
+	          if (err) {
+	              callback(err);
+	              callback = function () {};
+	          }
+	          else {
+	              completed += 1;
+	              if (completed >= arr.length) {
+	                  callback();
+	              }
+	          }
+	        }
+	    };
+	    async.forEach = async.each;
+
+	    async.eachSeries = function (arr, iterator, callback) {
+	        callback = callback || function () {};
+	        if (!arr.length) {
+	            return callback();
+	        }
+	        var completed = 0;
+	        var iterate = function () {
+	            iterator(arr[completed], function (err) {
+	                if (err) {
+	                    callback(err);
+	                    callback = function () {};
+	                }
+	                else {
+	                    completed += 1;
+	                    if (completed >= arr.length) {
+	                        callback();
+	                    }
+	                    else {
+	                        iterate();
+	                    }
+	                }
+	            });
+	        };
+	        iterate();
+	    };
+	    async.forEachSeries = async.eachSeries;
+
+	    async.eachLimit = function (arr, limit, iterator, callback) {
+	        var fn = _eachLimit(limit);
+	        fn.apply(null, [arr, iterator, callback]);
+	    };
+	    async.forEachLimit = async.eachLimit;
+
+	    var _eachLimit = function (limit) {
+
+	        return function (arr, iterator, callback) {
+	            callback = callback || function () {};
+	            if (!arr.length || limit <= 0) {
+	                return callback();
+	            }
+	            var completed = 0;
+	            var started = 0;
+	            var running = 0;
+
+	            (function replenish () {
+	                if (completed >= arr.length) {
+	                    return callback();
+	                }
+
+	                while (running < limit && started < arr.length) {
+	                    started += 1;
+	                    running += 1;
+	                    iterator(arr[started - 1], function (err) {
+	                        if (err) {
+	                            callback(err);
+	                            callback = function () {};
+	                        }
+	                        else {
+	                            completed += 1;
+	                            running -= 1;
+	                            if (completed >= arr.length) {
+	                                callback();
+	                            }
+	                            else {
+	                                replenish();
+	                            }
+	                        }
+	                    });
+	                }
+	            })();
+	        };
+	    };
+
+
+	    var doParallel = function (fn) {
+	        return function () {
+	            var args = Array.prototype.slice.call(arguments);
+	            return fn.apply(null, [async.each].concat(args));
+	        };
+	    };
+	    var doParallelLimit = function(limit, fn) {
+	        return function () {
+	            var args = Array.prototype.slice.call(arguments);
+	            return fn.apply(null, [_eachLimit(limit)].concat(args));
+	        };
+	    };
+	    var doSeries = function (fn) {
+	        return function () {
+	            var args = Array.prototype.slice.call(arguments);
+	            return fn.apply(null, [async.eachSeries].concat(args));
+	        };
+	    };
+
+
+	    var _asyncMap = function (eachfn, arr, iterator, callback) {
+	        arr = _map(arr, function (x, i) {
+	            return {index: i, value: x};
+	        });
+	        if (!callback) {
+	            eachfn(arr, function (x, callback) {
+	                iterator(x.value, function (err) {
+	                    callback(err);
+	                });
+	            });
+	        } else {
+	            var results = [];
+	            eachfn(arr, function (x, callback) {
+	                iterator(x.value, function (err, v) {
+	                    results[x.index] = v;
+	                    callback(err);
+	                });
+	            }, function (err) {
+	                callback(err, results);
+	            });
+	        }
+	    };
+	    async.map = doParallel(_asyncMap);
+	    async.mapSeries = doSeries(_asyncMap);
+	    async.mapLimit = function (arr, limit, iterator, callback) {
+	        return _mapLimit(limit)(arr, iterator, callback);
+	    };
+
+	    var _mapLimit = function(limit) {
+	        return doParallelLimit(limit, _asyncMap);
+	    };
+
+	    // reduce only has a series version, as doing reduce in parallel won't
+	    // work in many situations.
+	    async.reduce = function (arr, memo, iterator, callback) {
+	        async.eachSeries(arr, function (x, callback) {
+	            iterator(memo, x, function (err, v) {
+	                memo = v;
+	                callback(err);
+	            });
+	        }, function (err) {
+	            callback(err, memo);
+	        });
+	    };
+	    // inject alias
+	    async.inject = async.reduce;
+	    // foldl alias
+	    async.foldl = async.reduce;
+
+	    async.reduceRight = function (arr, memo, iterator, callback) {
+	        var reversed = _map(arr, function (x) {
+	            return x;
+	        }).reverse();
+	        async.reduce(reversed, memo, iterator, callback);
+	    };
+	    // foldr alias
+	    async.foldr = async.reduceRight;
+
+	    var _filter = function (eachfn, arr, iterator, callback) {
+	        var results = [];
+	        arr = _map(arr, function (x, i) {
+	            return {index: i, value: x};
+	        });
+	        eachfn(arr, function (x, callback) {
+	            iterator(x.value, function (v) {
+	                if (v) {
+	                    results.push(x);
+	                }
+	                callback();
+	            });
+	        }, function (err) {
+	            callback(_map(results.sort(function (a, b) {
+	                return a.index - b.index;
+	            }), function (x) {
+	                return x.value;
+	            }));
+	        });
+	    };
+	    async.filter = doParallel(_filter);
+	    async.filterSeries = doSeries(_filter);
+	    // select alias
+	    async.select = async.filter;
+	    async.selectSeries = async.filterSeries;
+
+	    var _reject = function (eachfn, arr, iterator, callback) {
+	        var results = [];
+	        arr = _map(arr, function (x, i) {
+	            return {index: i, value: x};
+	        });
+	        eachfn(arr, function (x, callback) {
+	            iterator(x.value, function (v) {
+	                if (!v) {
+	                    results.push(x);
+	                }
+	                callback();
+	            });
+	        }, function (err) {
+	            callback(_map(results.sort(function (a, b) {
+	                return a.index - b.index;
+	            }), function (x) {
+	                return x.value;
+	            }));
+	        });
+	    };
+	    async.reject = doParallel(_reject);
+	    async.rejectSeries = doSeries(_reject);
+
+	    var _detect = function (eachfn, arr, iterator, main_callback) {
+	        eachfn(arr, function (x, callback) {
+	            iterator(x, function (result) {
+	                if (result) {
+	                    main_callback(x);
+	                    main_callback = function () {};
+	                }
+	                else {
+	                    callback();
+	                }
+	            });
+	        }, function (err) {
+	            main_callback();
+	        });
+	    };
+	    async.detect = doParallel(_detect);
+	    async.detectSeries = doSeries(_detect);
+
+	    async.some = function (arr, iterator, main_callback) {
+	        async.each(arr, function (x, callback) {
+	            iterator(x, function (v) {
+	                if (v) {
+	                    main_callback(true);
+	                    main_callback = function () {};
+	                }
+	                callback();
+	            });
+	        }, function (err) {
+	            main_callback(false);
+	        });
+	    };
+	    // any alias
+	    async.any = async.some;
+
+	    async.every = function (arr, iterator, main_callback) {
+	        async.each(arr, function (x, callback) {
+	            iterator(x, function (v) {
+	                if (!v) {
+	                    main_callback(false);
+	                    main_callback = function () {};
+	                }
+	                callback();
+	            });
+	        }, function (err) {
+	            main_callback(true);
+	        });
+	    };
+	    // all alias
+	    async.all = async.every;
+
+	    async.sortBy = function (arr, iterator, callback) {
+	        async.map(arr, function (x, callback) {
+	            iterator(x, function (err, criteria) {
+	                if (err) {
+	                    callback(err);
+	                }
+	                else {
+	                    callback(null, {value: x, criteria: criteria});
+	                }
+	            });
+	        }, function (err, results) {
+	            if (err) {
+	                return callback(err);
+	            }
+	            else {
+	                var fn = function (left, right) {
+	                    var a = left.criteria, b = right.criteria;
+	                    return a < b ? -1 : a > b ? 1 : 0;
+	                };
+	                callback(null, _map(results.sort(fn), function (x) {
+	                    return x.value;
+	                }));
+	            }
+	        });
+	    };
+
+	    async.auto = function (tasks, callback) {
+	        callback = callback || function () {};
+	        var keys = _keys(tasks);
+	        var remainingTasks = keys.length
+	        if (!remainingTasks) {
+	            return callback();
+	        }
+
+	        var results = {};
+
+	        var listeners = [];
+	        var addListener = function (fn) {
+	            listeners.unshift(fn);
+	        };
+	        var removeListener = function (fn) {
+	            for (var i = 0; i < listeners.length; i += 1) {
+	                if (listeners[i] === fn) {
+	                    listeners.splice(i, 1);
+	                    return;
+	                }
+	            }
+	        };
+	        var taskComplete = function () {
+	            remainingTasks--
+	            _each(listeners.slice(0), function (fn) {
+	                fn();
+	            });
+	        };
+
+	        addListener(function () {
+	            if (!remainingTasks) {
+	                var theCallback = callback;
+	                // prevent final callback from calling itself if it errors
+	                callback = function () {};
+
+	                theCallback(null, results);
+	            }
+	        });
+
+	        _each(keys, function (k) {
+	            var task = _isArray(tasks[k]) ? tasks[k]: [tasks[k]];
+	            var taskCallback = function (err) {
+	                var args = Array.prototype.slice.call(arguments, 1);
+	                if (args.length <= 1) {
+	                    args = args[0];
+	                }
+	                if (err) {
+	                    var safeResults = {};
+	                    _each(_keys(results), function(rkey) {
+	                        safeResults[rkey] = results[rkey];
+	                    });
+	                    safeResults[k] = args;
+	                    callback(err, safeResults);
+	                    // stop subsequent errors hitting callback multiple times
+	                    callback = function () {};
+	                }
+	                else {
+	                    results[k] = args;
+	                    async.setImmediate(taskComplete);
+	                }
+	            };
+	            var requires = task.slice(0, Math.abs(task.length - 1)) || [];
+	            var ready = function () {
+	                return _reduce(requires, function (a, x) {
+	                    return (a && results.hasOwnProperty(x));
+	                }, true) && !results.hasOwnProperty(k);
+	            };
+	            if (ready()) {
+	                task[task.length - 1](taskCallback, results);
+	            }
+	            else {
+	                var listener = function () {
+	                    if (ready()) {
+	                        removeListener(listener);
+	                        task[task.length - 1](taskCallback, results);
+	                    }
+	                };
+	                addListener(listener);
+	            }
+	        });
+	    };
+
+	    async.retry = function(times, task, callback) {
+	        var DEFAULT_TIMES = 5;
+	        var attempts = [];
+	        // Use defaults if times not passed
+	        if (typeof times === 'function') {
+	            callback = task;
+	            task = times;
+	            times = DEFAULT_TIMES;
+	        }
+	        // Make sure times is a number
+	        times = parseInt(times, 10) || DEFAULT_TIMES;
+	        var wrappedTask = function(wrappedCallback, wrappedResults) {
+	            var retryAttempt = function(task, finalAttempt) {
+	                return function(seriesCallback) {
+	                    task(function(err, result){
+	                        seriesCallback(!err || finalAttempt, {err: err, result: result});
+	                    }, wrappedResults);
+	                };
+	            };
+	            while (times) {
+	                attempts.push(retryAttempt(task, !(times-=1)));
+	            }
+	            async.series(attempts, function(done, data){
+	                data = data[data.length - 1];
+	                (wrappedCallback || callback)(data.err, data.result);
+	            });
+	        }
+	        // If a callback is passed, run this as a controll flow
+	        return callback ? wrappedTask() : wrappedTask
+	    };
+
+	    async.waterfall = function (tasks, callback) {
+	        callback = callback || function () {};
+	        if (!_isArray(tasks)) {
+	          var err = new Error('First argument to waterfall must be an array of functions');
+	          return callback(err);
+	        }
+	        if (!tasks.length) {
+	            return callback();
+	        }
+	        var wrapIterator = function (iterator) {
+	            return function (err) {
+	                if (err) {
+	                    callback.apply(null, arguments);
+	                    callback = function () {};
+	                }
+	                else {
+	                    var args = Array.prototype.slice.call(arguments, 1);
+	                    var next = iterator.next();
+	                    if (next) {
+	                        args.push(wrapIterator(next));
+	                    }
+	                    else {
+	                        args.push(callback);
+	                    }
+	                    async.setImmediate(function () {
+	                        iterator.apply(null, args);
+	                    });
+	                }
+	            };
+	        };
+	        wrapIterator(async.iterator(tasks))();
+	    };
+
+	    var _parallel = function(eachfn, tasks, callback) {
+	        callback = callback || function () {};
+	        if (_isArray(tasks)) {
+	            eachfn.map(tasks, function (fn, callback) {
+	                if (fn) {
+	                    fn(function (err) {
+	                        var args = Array.prototype.slice.call(arguments, 1);
+	                        if (args.length <= 1) {
+	                            args = args[0];
+	                        }
+	                        callback.call(null, err, args);
+	                    });
+	                }
+	            }, callback);
+	        }
+	        else {
+	            var results = {};
+	            eachfn.each(_keys(tasks), function (k, callback) {
+	                tasks[k](function (err) {
+	                    var args = Array.prototype.slice.call(arguments, 1);
+	                    if (args.length <= 1) {
+	                        args = args[0];
+	                    }
+	                    results[k] = args;
+	                    callback(err);
+	                });
+	            }, function (err) {
+	                callback(err, results);
+	            });
+	        }
+	    };
+
+	    async.parallel = function (tasks, callback) {
+	        _parallel({ map: async.map, each: async.each }, tasks, callback);
+	    };
+
+	    async.parallelLimit = function(tasks, limit, callback) {
+	        _parallel({ map: _mapLimit(limit), each: _eachLimit(limit) }, tasks, callback);
+	    };
+
+	    async.series = function (tasks, callback) {
+	        callback = callback || function () {};
+	        if (_isArray(tasks)) {
+	            async.mapSeries(tasks, function (fn, callback) {
+	                if (fn) {
+	                    fn(function (err) {
+	                        var args = Array.prototype.slice.call(arguments, 1);
+	                        if (args.length <= 1) {
+	                            args = args[0];
+	                        }
+	                        callback.call(null, err, args);
+	                    });
+	                }
+	            }, callback);
+	        }
+	        else {
+	            var results = {};
+	            async.eachSeries(_keys(tasks), function (k, callback) {
+	                tasks[k](function (err) {
+	                    var args = Array.prototype.slice.call(arguments, 1);
+	                    if (args.length <= 1) {
+	                        args = args[0];
+	                    }
+	                    results[k] = args;
+	                    callback(err);
+	                });
+	            }, function (err) {
+	                callback(err, results);
+	            });
+	        }
+	    };
+
+	    async.iterator = function (tasks) {
+	        var makeCallback = function (index) {
+	            var fn = function () {
+	                if (tasks.length) {
+	                    tasks[index].apply(null, arguments);
+	                }
+	                return fn.next();
+	            };
+	            fn.next = function () {
+	                return (index < tasks.length - 1) ? makeCallback(index + 1): null;
+	            };
+	            return fn;
+	        };
+	        return makeCallback(0);
+	    };
+
+	    async.apply = function (fn) {
+	        var args = Array.prototype.slice.call(arguments, 1);
+	        return function () {
+	            return fn.apply(
+	                null, args.concat(Array.prototype.slice.call(arguments))
+	            );
+	        };
+	    };
+
+	    var _concat = function (eachfn, arr, fn, callback) {
+	        var r = [];
+	        eachfn(arr, function (x, cb) {
+	            fn(x, function (err, y) {
+	                r = r.concat(y || []);
+	                cb(err);
+	            });
+	        }, function (err) {
+	            callback(err, r);
+	        });
+	    };
+	    async.concat = doParallel(_concat);
+	    async.concatSeries = doSeries(_concat);
+
+	    async.whilst = function (test, iterator, callback) {
+	        if (test()) {
+	            iterator(function (err) {
+	                if (err) {
+	                    return callback(err);
+	                }
+	                async.whilst(test, iterator, callback);
+	            });
+	        }
+	        else {
+	            callback();
+	        }
+	    };
+
+	    async.doWhilst = function (iterator, test, callback) {
+	        iterator(function (err) {
+	            if (err) {
+	                return callback(err);
+	            }
+	            var args = Array.prototype.slice.call(arguments, 1);
+	            if (test.apply(null, args)) {
+	                async.doWhilst(iterator, test, callback);
+	            }
+	            else {
+	                callback();
+	            }
+	        });
+	    };
+
+	    async.until = function (test, iterator, callback) {
+	        if (!test()) {
+	            iterator(function (err) {
+	                if (err) {
+	                    return callback(err);
+	                }
+	                async.until(test, iterator, callback);
+	            });
+	        }
+	        else {
+	            callback();
+	        }
+	    };
+
+	    async.doUntil = function (iterator, test, callback) {
+	        iterator(function (err) {
+	            if (err) {
+	                return callback(err);
+	            }
+	            var args = Array.prototype.slice.call(arguments, 1);
+	            if (!test.apply(null, args)) {
+	                async.doUntil(iterator, test, callback);
+	            }
+	            else {
+	                callback();
+	            }
+	        });
+	    };
+
+	    async.queue = function (worker, concurrency) {
+	        if (concurrency === undefined) {
+	            concurrency = 1;
+	        }
+	        function _insert(q, data, pos, callback) {
+	          if (!q.started){
+	            q.started = true;
+	          }
+	          if (!_isArray(data)) {
+	              data = [data];
+	          }
+	          if(data.length == 0) {
+	             // call drain immediately if there are no tasks
+	             return async.setImmediate(function() {
+	                 if (q.drain) {
+	                     q.drain();
+	                 }
+	             });
+	          }
+	          _each(data, function(task) {
+	              var item = {
+	                  data: task,
+	                  callback: typeof callback === 'function' ? callback : null
+	              };
+
+	              if (pos) {
+	                q.tasks.unshift(item);
+	              } else {
+	                q.tasks.push(item);
+	              }
+
+	              if (q.saturated && q.tasks.length === q.concurrency) {
+	                  q.saturated();
+	              }
+	              async.setImmediate(q.process);
+	          });
+	        }
+
+	        var workers = 0;
+	        var q = {
+	            tasks: [],
+	            concurrency: concurrency,
+	            saturated: null,
+	            empty: null,
+	            drain: null,
+	            started: false,
+	            paused: false,
+	            push: function (data, callback) {
+	              _insert(q, data, false, callback);
+	            },
+	            kill: function () {
+	              q.drain = null;
+	              q.tasks = [];
+	            },
+	            unshift: function (data, callback) {
+	              _insert(q, data, true, callback);
+	            },
+	            process: function () {
+	                if (!q.paused && workers < q.concurrency && q.tasks.length) {
+	                    var task = q.tasks.shift();
+	                    if (q.empty && q.tasks.length === 0) {
+	                        q.empty();
+	                    }
+	                    workers += 1;
+	                    var next = function () {
+	                        workers -= 1;
+	                        if (task.callback) {
+	                            task.callback.apply(task, arguments);
+	                        }
+	                        if (q.drain && q.tasks.length + workers === 0) {
+	                            q.drain();
+	                        }
+	                        q.process();
+	                    };
+	                    var cb = only_once(next);
+	                    worker(task.data, cb);
+	                }
+	            },
+	            length: function () {
+	                return q.tasks.length;
+	            },
+	            running: function () {
+	                return workers;
+	            },
+	            idle: function() {
+	                return q.tasks.length + workers === 0;
+	            },
+	            pause: function () {
+	                if (q.paused === true) { return; }
+	                q.paused = true;
+	            },
+	            resume: function () {
+	                if (q.paused === false) { return; }
+	                q.paused = false;
+	                // Need to call q.process once per concurrent
+	                // worker to preserve full concurrency after pause
+	                for (var w = 1; w <= q.concurrency; w++) {
+	                    async.setImmediate(q.process);
+	                }
+	            }
+	        };
+	        return q;
+	    };
+
+	    async.priorityQueue = function (worker, concurrency) {
+
+	        function _compareTasks(a, b){
+	          return a.priority - b.priority;
+	        };
+
+	        function _binarySearch(sequence, item, compare) {
+	          var beg = -1,
+	              end = sequence.length - 1;
+	          while (beg < end) {
+	            var mid = beg + ((end - beg + 1) >>> 1);
+	            if (compare(item, sequence[mid]) >= 0) {
+	              beg = mid;
+	            } else {
+	              end = mid - 1;
+	            }
+	          }
+	          return beg;
+	        }
+
+	        function _insert(q, data, priority, callback) {
+	          if (!q.started){
+	            q.started = true;
+	          }
+	          if (!_isArray(data)) {
+	              data = [data];
+	          }
+	          if(data.length == 0) {
+	             // call drain immediately if there are no tasks
+	             return async.setImmediate(function() {
+	                 if (q.drain) {
+	                     q.drain();
+	                 }
+	             });
+	          }
+	          _each(data, function(task) {
+	              var item = {
+	                  data: task,
+	                  priority: priority,
+	                  callback: typeof callback === 'function' ? callback : null
+	              };
+
+	              q.tasks.splice(_binarySearch(q.tasks, item, _compareTasks) + 1, 0, item);
+
+	              if (q.saturated && q.tasks.length === q.concurrency) {
+	                  q.saturated();
+	              }
+	              async.setImmediate(q.process);
+	          });
+	        }
+
+	        // Start with a normal queue
+	        var q = async.queue(worker, concurrency);
+
+	        // Override push to accept second parameter representing priority
+	        q.push = function (data, priority, callback) {
+	          _insert(q, data, priority, callback);
+	        };
+
+	        // Remove unshift function
+	        delete q.unshift;
+
+	        return q;
+	    };
+
+	    async.cargo = function (worker, payload) {
+	        var working     = false,
+	            tasks       = [];
+
+	        var cargo = {
+	            tasks: tasks,
+	            payload: payload,
+	            saturated: null,
+	            empty: null,
+	            drain: null,
+	            drained: true,
+	            push: function (data, callback) {
+	                if (!_isArray(data)) {
+	                    data = [data];
+	                }
+	                _each(data, function(task) {
+	                    tasks.push({
+	                        data: task,
+	                        callback: typeof callback === 'function' ? callback : null
+	                    });
+	                    cargo.drained = false;
+	                    if (cargo.saturated && tasks.length === payload) {
+	                        cargo.saturated();
+	                    }
+	                });
+	                async.setImmediate(cargo.process);
+	            },
+	            process: function process() {
+	                if (working) return;
+	                if (tasks.length === 0) {
+	                    if(cargo.drain && !cargo.drained) cargo.drain();
+	                    cargo.drained = true;
+	                    return;
+	                }
+
+	                var ts = typeof payload === 'number'
+	                            ? tasks.splice(0, payload)
+	                            : tasks.splice(0, tasks.length);
+
+	                var ds = _map(ts, function (task) {
+	                    return task.data;
+	                });
+
+	                if(cargo.empty) cargo.empty();
+	                working = true;
+	                worker(ds, function () {
+	                    working = false;
+
+	                    var args = arguments;
+	                    _each(ts, function (data) {
+	                        if (data.callback) {
+	                            data.callback.apply(null, args);
+	                        }
+	                    });
+
+	                    process();
+	                });
+	            },
+	            length: function () {
+	                return tasks.length;
+	            },
+	            running: function () {
+	                return working;
+	            }
+	        };
+	        return cargo;
+	    };
+
+	    var _console_fn = function (name) {
+	        return function (fn) {
+	            var args = Array.prototype.slice.call(arguments, 1);
+	            fn.apply(null, args.concat([function (err) {
+	                var args = Array.prototype.slice.call(arguments, 1);
+	                if (typeof console !== 'undefined') {
+	                    if (err) {
+	                        if (console.error) {
+	                            console.error(err);
+	                        }
+	                    }
+	                    else if (console[name]) {
+	                        _each(args, function (x) {
+	                            console[name](x);
+	                        });
+	                    }
+	                }
+	            }]));
+	        };
+	    };
+	    async.log = _console_fn('log');
+	    async.dir = _console_fn('dir');
+	    /*async.info = _console_fn('info');
+	    async.warn = _console_fn('warn');
+	    async.error = _console_fn('error');*/
+
+	    async.memoize = function (fn, hasher) {
+	        var memo = {};
+	        var queues = {};
+	        hasher = hasher || function (x) {
+	            return x;
+	        };
+	        var memoized = function () {
+	            var args = Array.prototype.slice.call(arguments);
+	            var callback = args.pop();
+	            var key = hasher.apply(null, args);
+	            if (key in memo) {
+	                async.nextTick(function () {
+	                    callback.apply(null, memo[key]);
+	                });
+	            }
+	            else if (key in queues) {
+	                queues[key].push(callback);
+	            }
+	            else {
+	                queues[key] = [callback];
+	                fn.apply(null, args.concat([function () {
+	                    memo[key] = arguments;
+	                    var q = queues[key];
+	                    delete queues[key];
+	                    for (var i = 0, l = q.length; i < l; i++) {
+	                      q[i].apply(null, arguments);
+	                    }
+	                }]));
+	            }
+	        };
+	        memoized.memo = memo;
+	        memoized.unmemoized = fn;
+	        return memoized;
+	    };
+
+	    async.unmemoize = function (fn) {
+	      return function () {
+	        return (fn.unmemoized || fn).apply(null, arguments);
+	      };
+	    };
+
+	    async.times = function (count, iterator, callback) {
+	        var counter = [];
+	        for (var i = 0; i < count; i++) {
+	            counter.push(i);
+	        }
+	        return async.map(counter, iterator, callback);
+	    };
+
+	    async.timesSeries = function (count, iterator, callback) {
+	        var counter = [];
+	        for (var i = 0; i < count; i++) {
+	            counter.push(i);
+	        }
+	        return async.mapSeries(counter, iterator, callback);
+	    };
+
+	    async.seq = function (/* functions... */) {
+	        var fns = arguments;
+	        return function () {
+	            var that = this;
+	            var args = Array.prototype.slice.call(arguments);
+	            var callback = args.pop();
+	            async.reduce(fns, args, function (newargs, fn, cb) {
+	                fn.apply(that, newargs.concat([function () {
+	                    var err = arguments[0];
+	                    var nextargs = Array.prototype.slice.call(arguments, 1);
+	                    cb(err, nextargs);
+	                }]))
+	            },
+	            function (err, results) {
+	                callback.apply(that, [err].concat(results));
+	            });
+	        };
+	    };
+
+	    async.compose = function (/* functions... */) {
+	      return async.seq.apply(null, Array.prototype.reverse.call(arguments));
+	    };
+
+	    var _applyEach = function (eachfn, fns /*args...*/) {
+	        var go = function () {
+	            var that = this;
+	            var args = Array.prototype.slice.call(arguments);
+	            var callback = args.pop();
+	            return eachfn(fns, function (fn, cb) {
+	                fn.apply(that, args.concat([cb]));
+	            },
+	            callback);
+	        };
+	        if (arguments.length > 2) {
+	            var args = Array.prototype.slice.call(arguments, 2);
+	            return go.apply(this, args);
+	        }
+	        else {
+	            return go;
+	        }
+	    };
+	    async.applyEach = doParallel(_applyEach);
+	    async.applyEachSeries = doSeries(_applyEach);
+
+	    async.forever = function (fn, callback) {
+	        function next(err) {
+	            if (err) {
+	                if (callback) {
+	                    return callback(err);
+	                }
+	                throw err;
+	            }
+	            fn(next);
+	        }
+	        next();
+	    };
+
+	    // Node.js
+	    if (typeof module !== 'undefined' && module.exports) {
+	        module.exports = async;
+	    }
+	    // AMD / RequireJS
+	    else if (typeof define !== 'undefined' && define.amd) {
+	        define([], function () {
+	            return async;
+	        });
+	    }
+	    // included directly via <script> tag
+	    else {
+	        root.async = async;
+	    }
+
+	}());
+
+	}).call(this,require('_process'))
+	},{"_process":3}],13:[function(require,module,exports){
+	var async       = require('async'),
+	    urlParser   = require('url'),
+	    Resource    = require('./Resource'),
+	    EventEmitter = require('eventemitter3');
+
+	/**
+	 * Manages the state and loading of multiple resources to load.
+	 *
+	 * @class
+	 * @param [baseUrl=''] {string} The base url for all resources loaded by this loader.
+	 * @param [concurrency=10] {number} The number of resources to load concurrently.
+	 */
+	function Loader(baseUrl, concurrency) {
+	    EventEmitter.call(this);
+
+	    concurrency = concurrency || 10;
+
+	    /**
+	     * The base url for all resources loaded by this loader.
+	     *
+	     * @member {string}
+	     */
+	    this.baseUrl = baseUrl || '';
+
+	    /**
+	     * The progress percent of the loader going through the queue.
+	     *
+	     * @member {number}
+	     */
+	    this.progress = 0;
+
+	    /**
+	     * Loading state of the loader, true if it is currently loading resources.
+	     *
+	     * @member {boolean}
+	     */
+	    this.loading = false;
+
+	    /**
+	     * The percentage of total progress that a single resource represents.
+	     *
+	     * @member {number}
+	     */
+	    this._progressChunk = 0;
+
+	    /**
+	     * The middleware to run before loading each resource.
+	     *
+	     * @member {function[]}
+	     */
+	    this._beforeMiddleware = [];
+
+	    /**
+	     * The middleware to run after loading each resource.
+	     *
+	     * @member {function[]}
+	     */
+	    this._afterMiddleware = [];
+
+	    /**
+	     * The `_loadResource` function bound with this object context.
+	     *
+	     * @private
+	     * @member {function}
+	     */
+	    this._boundLoadResource = this._loadResource.bind(this);
+
+	    /**
+	     * The `_onLoad` function bound with this object context.
+	     *
+	     * @private
+	     * @member {function}
+	     */
+	    this._boundOnLoad = this._onLoad.bind(this);
+
+	    /**
+	     * The resource buffer that fills until `load` is called to start loading resources.
+	     *
+	     * @private
+	     * @member {Resource[]}
+	     */
+	    this._buffer = [];
+
+	    /**
+	     * Used to track load completion.
+	     *
+	     * @private
+	     * @member {number}
+	     */
+	    this._numToLoad = 0;
+
+	    /**
+	     * The resources waiting to be loaded.
+	     *
+	     * @private
+	     * @member {Resource[]}
+	     */
+	    this._queue = async.queue(this._boundLoadResource, concurrency);
+
+	    /**
+	     * All the resources for this loader keyed by name.
+	     *
+	     * @member {object<string, Resource>}
+	     */
+	    this.resources = {};
+
+	    /**
+	     * Emitted once per loaded or errored resource.
+	     *
+	     * @event progress
+	     * @memberof Loader#
+	     */
+
+	    /**
+	     * Emitted once per errored resource.
+	     *
+	     * @event error
+	     * @memberof Loader#
+	     */
+
+	    /**
+	     * Emitted once per loaded resource.
+	     *
+	     * @event load
+	     * @memberof Loader#
+	     */
+
+	    /**
+	     * Emitted when the loader begins to process the queue.
+	     *
+	     * @event start
+	     * @memberof Loader#
+	     */
+
+	    /**
+	     * Emitted when the queued resources all load.
+	     *
+	     * @event complete
+	     * @memberof Loader#
+	     */
 	}
 
-	},{}],13:[function(require,module,exports){
+	Loader.prototype = Object.create(EventEmitter.prototype);
+	Loader.prototype.constructor = Loader;
+	module.exports = Loader;
+
+	/**
+	 * Adds a resource (or multiple resources) to the loader queue.
+	 *
+	 * This function can take a wide variety of different parameters. The only thing that is always
+	 * required the url to load. All the following will work:
+	 *
+	 * ```js
+	 * loader
+	 *     // normal param syntax
+	 *     .add('key', 'http://...', function () {})
+	 *     .add('http://...', function () {})
+	 *     .add('http://...')
+	 *
+	 *     // object syntax
+	 *     .add({
+	 *         name: 'key2',
+	 *         url: 'http://...'
+	 *     }, function () {})
+	 *     .add({
+	 *         url: 'http://...'
+	 *     }, function () {})
+	 *     .add({
+	 *         name: 'key3',
+	 *         url: 'http://...'
+	 *         onComplete: function () {}
+	 *     })
+	 *     .add({
+	 *         url: 'https://...',
+	 *         onComplete: function () {},
+	 *         crossOrigin: true
+	 *     })
+	 *
+	 *     // you can also pass an array of objects or urls or both
+	 *     .add([
+	 *         { name: 'key4', url: 'http://...', onComplete: function () {} },
+	 *         { url: 'http://...', onComplete: function () {} },
+	 *         'http://...'
+	 *     ]);
+	 * ```
+	 *
+	 * @alias enqueue
+	 * @param [name] {string} The name of the resource to load, if not passed the url is used.
+	 * @param url {string} The url for this resource, relative to the baseUrl of this loader.
+	 * @param [options] {object} The options for the load.
+	 * @param [options.crossOrigin] {boolean} Is this request cross-origin? Default is to determine automatically.
+	 * @param [options.loadType=Resource.LOAD_TYPE.XHR] {Resource.XHR_LOAD_TYPE} How should this resource be loaded?
+	 * @param [options.xhrType=Resource.XHR_RESPONSE_TYPE.DEFAULT] {Resource.XHR_RESPONSE_TYPE} How should the data being
+	 *      loaded be interpreted when using XHR?
+	 * @param [callback] {function} Function to call when this specific resource completes loading.
+	 * @return {Loader}
+	 */
+	Loader.prototype.add = Loader.prototype.enqueue = function (name, url, options, cb) {
+	    // special case of an array of objects or urls
+	    if (Array.isArray(name)) {
+	        for (var i = 0; i < name.length; ++i) {
+	            this.add(name[i]);
+	        }
+
+	        return this;
+	    }
+
+	    // if an object is passed instead of params
+	    if (typeof name === 'object') {
+	        cb = url || name.callback || name.onComplete;
+	        options = name;
+	        url = name.url;
+	        name = name.name || name.key || name.url;
+	    }
+
+	    // case where no name is passed shift all args over by one.
+	    if (typeof url !== 'string') {
+	        cb = options;
+	        options = url;
+	        url = name;
+	    }
+
+	    // now that we shifted make sure we have a proper url.
+	    if (typeof url !== 'string') {
+	        throw new Error('No url passed to add resource to loader.');
+	    }
+
+	    // options are optional so people might pass a function and no options
+	    if (typeof options === 'function') {
+	        cb = options;
+	        options = null;
+	    }
+
+	    // check if resource already exists.
+	    if (this.resources[name]) {
+	        throw new Error('Resource with name "' + name + '" already exists.');
+	    }
+
+	    // add base url if this isn't an absolute url
+	    url = this._handleBaseUrl(url);
+
+	    // create the store the resource
+	    this.resources[name] = new Resource(name, url, options);
+
+	    if (typeof cb === 'function') {
+	        this.resources[name].once('afterMiddleware', cb);
+	    }
+
+	    this._numToLoad++;
+
+	    // if already loading add it to the worker queue
+	    if (this._queue.started) {
+	        this._queue.push(this.resources[name]);
+	        this._progressChunk = (100 - this.progress) / (this._queue.length() + this._queue.running());
+	    }
+	    // otherwise buffer it to be added to the queue later
+	    else {
+	        this._buffer.push(this.resources[name]);
+	        this._progressChunk = 100 / this._buffer.length;
+	    }
+
+	    return this;
+	};
+
+	Loader.prototype._handleBaseUrl = function (url) {
+	    var parsedUrl = urlParser.parse(url);
+
+	    // absolute url, just use it as is.
+	    if (parsedUrl.protocol || parsedUrl.pathname.indexOf('//') === 0) {
+	        return url;
+	    }
+
+	    // if baseUrl doesn't end in slash and url doesn't start with slash, then add a slash inbetween
+	    if (
+	        this.baseUrl.length &&
+	        this.baseUrl.lastIndexOf('/') !== this.baseUrl.length - 1 &&
+	        url.charAt(0) !== '/'
+	    ) {
+	        return this.baseUrl + '/' + url;
+	    }
+	    else {
+	        return this.baseUrl + url;
+	    }
+	};
+
+
+	/**
+	 * Sets up a middleware function that will run *before* the
+	 * resource is loaded.
+	 *
+	 * @alias pre
+	 * @param middleware {function} The middleware function to register.
+	 * @return {Loader}
+	 */
+	Loader.prototype.before = Loader.prototype.pre = function (fn) {
+	    this._beforeMiddleware.push(fn);
+
+	    return this;
+	};
+
+	/**
+	 * Sets up a middleware function that will run *after* the
+	 * resource is loaded.
+	 *
+	 * @alias use
+	 * @param middleware {function} The middleware function to register.
+	 * @return {Loader}
+	 */
+	Loader.prototype.after = Loader.prototype.use = function (fn) {
+	    this._afterMiddleware.push(fn);
+
+	    return this;
+	};
+
+	/**
+	 * Resets the queue of the loader to prepare for a new load.
+	 *
+	 * @return {Loader}
+	 */
+	Loader.prototype.reset = function () {
+	    // this.baseUrl = baseUrl || '';
+
+	    this.progress = 0;
+
+	    this.loading = false;
+
+	    this._progressChunk = 0;
+
+	    // this._beforeMiddleware.length = 0;
+	    // this._afterMiddleware.length = 0;
+
+	    this._buffer.length = 0;
+
+	    this._numToLoad = 0;
+
+	    this._queue.kill();
+	    this._queue.started = false;
+
+	    this.resources = {};
+	};
+
+	/**
+	 * Starts loading the queued resources.
+	 *
+	 * @fires start
+	 * @param [callback] {function} Optional callback that will be bound to the `complete` event.
+	 * @return {Loader}
+	 */
+	Loader.prototype.load = function (cb) {
+	    // register complete callback if they pass one
+	    if (typeof cb === 'function') {
+	        this.once('complete', cb);
+	    }
+
+	    // if the queue has already started we are done here
+	    if (this._queue.started) {
+	        return this;
+	    }
+
+	    // notify of start
+	    this.emit('start', this);
+
+	    // start the internal queue
+	    for (var i = 0; i < this._buffer.length; ++i) {
+	        this._queue.push(this._buffer[i]);
+	    }
+
+	    // empty the buffer
+	    this._buffer.length = 0;
+
+	    return this;
+	};
+
+	/**
+	 * Loads a single resource.
+	 *
+	 * @fires progress
+	 * @private
+	 */
+	Loader.prototype._loadResource = function (resource, dequeue) {
+	    var self = this;
+
+	    resource._dequeue = dequeue;
+
+	    this._runMiddleware(resource, this._beforeMiddleware, function () {
+	        // resource.on('progress', self.emit.bind(self, 'progress'));
+
+	        resource.load(self._boundOnLoad);
+	    });
+	};
+
+	/**
+	 * Called once each resource has loaded.
+	 *
+	 * @fires complete
+	 * @private
+	 */
+	Loader.prototype._onComplete = function () {
+	    this.emit('complete', this, this.resources);
+	};
+
+	/**
+	 * Called each time a resources is loaded.
+	 *
+	 * @fires progress
+	 * @fires error
+	 * @fires load
+	 * @private
+	 */
+	Loader.prototype._onLoad = function (resource) {
+	    this.progress += this._progressChunk;
+
+	    this.emit('progress', this, resource);
+
+	    // run middleware, this *must* happen before dequeue so sub-assets get added properly
+	    this._runMiddleware(resource, this._afterMiddleware, function () {
+	        resource.emit('afterMiddleware', resource);
+
+	        this._numToLoad--;
+
+	        // do completion check
+	        if (this._numToLoad === 0) {
+	            this.progress = 100;
+	            this._onComplete();
+	        }
+	        
+	        if (resource.error) {
+	            this.emit('error', resource.error, this, resource);
+	        }
+	        else {
+	            this.emit('load', this, resource);
+	        }
+	    });
+	    
+
+
+	    // remove this resource from the async queue
+	    resource._dequeue();
+	};
+
+	/**
+	 * Run middleware functions on a resource.
+	 *
+	 * @private
+	 */
+	Loader.prototype._runMiddleware = function (resource, fns, cb) {
+	    var self = this;
+
+	    async.eachSeries(fns, function (fn, next) {
+	        fn.call(self, resource, next);
+	    }, cb.bind(this, resource));
+	};
+
+	Loader.LOAD_TYPE = Resource.LOAD_TYPE;
+	Loader.XHR_READY_STATE = Resource.XHR_READY_STATE;
+	Loader.XHR_RESPONSE_TYPE = Resource.XHR_RESPONSE_TYPE;
+
+	},{"./Resource":14,"async":12,"eventemitter3":10,"url":8}],14:[function(require,module,exports){
+	var EventEmitter = require('eventemitter3'),
+	    _url = require('url'),
+	    // tests is CORS is supported in XHR, if not we need to use XDR
+	    useXdr = !!(window.XDomainRequest && !('withCredentials' in (new XMLHttpRequest()))),
+	    tempAnchor = null;
+
+	/**
+	 * Manages the state and loading of a single resource represented by
+	 * a single URL.
+	 *
+	 * @class
+	 * @param name {string} The name of the resource to load.
+	 * @param url {string|string[]} The url for this resource, for audio/video loads you can pass an array of sources.
+	 * @param [options] {object} The options for the load.
+	 * @param [options.crossOrigin] {string|boolean} Is this request cross-origin? Default is to determine automatically.
+	 * @param [options.loadType=Resource.LOAD_TYPE.XHR] {Resource.LOAD_TYPE} How should this resource be loaded?
+	 * @param [options.xhrType=Resource.XHR_RESPONSE_TYPE.DEFAULT] {Resource.XHR_RESPONSE_TYPE} How should the data being
+	 *      loaded be interpreted when using XHR?
+	 * @param [options.metadata] {object} Extra info for middleware.
+	 */
+	function Resource(name, url, options) {
+	    EventEmitter.call(this);
+
+	    options = options || {};
+
+	    if (typeof name !== 'string' || typeof url !== 'string') {
+	        throw new Error('Both name and url are required for constructing a resource.');
+	    }
+
+	    /**
+	     * The name of this resource.
+	     *
+	     * @member {string}
+	     * @readonly
+	     */
+	    this.name = name;
+
+	    /**
+	     * The url used to load this resource.
+	     *
+	     * @member {string}
+	     * @readonly
+	     */
+	    this.url = url;
+
+	    /**
+	     * Stores whether or not this url is a data url.
+	     *
+	     * @member {boolean}
+	     * @readonly
+	     */
+	    this.isDataUrl = this.url.indexOf('data:') === 0;
+
+	    /**
+	     * The data that was loaded by the resource.
+	     *
+	     * @member {any}
+	     */
+	    this.data = null;
+
+	    /**
+	     * Is this request cross-origin? If unset, determined automatically.
+	     *
+	     * @member {string}
+	     */
+	    this.crossOrigin = options.crossOrigin === true ? 'anonymous' : options.crossOrigin;
+
+	    /**
+	     * The method of loading to use for this resource.
+	     *
+	     * @member {Resource.LOAD_TYPE}
+	     */
+	    this.loadType = options.loadType || this._determineLoadType();
+
+	    /**
+	     * The type used to load the resource via XHR. If unset, determined automatically.
+	     *
+	     * @member {string}
+	     */
+	    this.xhrType = options.xhrType;
+
+	    /**
+	     * Extra info for middleware
+	     *
+	     * @member {object}
+	     */
+	    this.metadata = options.metadata || {};
+
+	    /**
+	     * The error that occurred while loading (if any).
+	     *
+	     * @member {Error}
+	     * @readonly
+	     */
+	    this.error = null;
+
+	    /**
+	     * The XHR object that was used to load this resource. This is only set
+	     * when `loadType` is `Resource.LOAD_TYPE.XHR`.
+	     *
+	     * @member {XMLHttpRequest}
+	     */
+	    this.xhr = null;
+
+	    /**
+	     * Describes if this resource was loaded as json. Only valid after the resource
+	     * has completely loaded.
+	     *
+	     * @member {boolean}
+	     */
+	    this.isJson = false;
+
+	    /**
+	     * Describes if this resource was loaded as xml. Only valid after the resource
+	     * has completely loaded.
+	     *
+	     * @member {boolean}
+	     */
+	    this.isXml = false;
+
+	    /**
+	     * Describes if this resource was loaded as an image tag. Only valid after the resource
+	     * has completely loaded.
+	     *
+	     * @member {boolean}
+	     */
+	    this.isImage = false;
+
+	    /**
+	     * Describes if this resource was loaded as an audio tag. Only valid after the resource
+	     * has completely loaded.
+	     *
+	     * @member {boolean}
+	     */
+	    this.isAudio = false;
+
+	    /**
+	     * Describes if this resource was loaded as a video tag. Only valid after the resource
+	     * has completely loaded.
+	     *
+	     * @member {boolean}
+	     */
+	    this.isVideo = false;
+
+	    /**
+	     * The `dequeue` method that will be used a storage place for the async queue dequeue method
+	     * used privately by the loader.
+	     *
+	     * @member {function}
+	     * @private
+	     */
+	    this._dequeue = null;
+
+	    /**
+	     * The `complete` function bound to this resource's context.
+	     *
+	     * @member {function}
+	     * @private
+	     */
+	    this._boundComplete = this.complete.bind(this);
+
+	    /**
+	     * The `_onError` function bound to this resource's context.
+	     *
+	     * @member {function}
+	     * @private
+	     */
+	    this._boundOnError = this._onError.bind(this);
+
+	    /**
+	     * The `_onProgress` function bound to this resource's context.
+	     *
+	     * @member {function}
+	     * @private
+	     */
+	    this._boundOnProgress = this._onProgress.bind(this);
+
+	    // xhr callbacks
+	    this._boundXhrOnError = this._xhrOnError.bind(this);
+	    this._boundXhrOnAbort = this._xhrOnAbort.bind(this);
+	    this._boundXhrOnLoad = this._xhrOnLoad.bind(this);
+	    this._boundXdrOnTimeout = this._xdrOnTimeout.bind(this);
+
+	    /**
+	     * Emitted when the resource beings to load.
+	     *
+	     * @event start
+	     * @memberof Resource#
+	     */
+
+	    /**
+	     * Emitted each time progress of this resource load updates.
+	     * Not all resources types and loader systems can support this event
+	     * so sometimes it may not be available. If the resource
+	     * is being loaded on a modern browser, using XHR, and the remote server
+	     * properly sets Content-Length headers, then this will be available.
+	     *
+	     * @event progress
+	     * @memberof Resource#
+	     */
+
+	    /**
+	     * Emitted once this resource has loaded, if there was an error it will
+	     * be in the `error` property.
+	     *
+	     * @event complete
+	     * @memberof Resource#
+	     */
+	}
+
+	Resource.prototype = Object.create(EventEmitter.prototype);
+	Resource.prototype.constructor = Resource;
+	module.exports = Resource;
+
+	/**
+	 * Marks the resource as complete.
+	 *
+	 * @fires complete
+	 */
+	Resource.prototype.complete = function () {
+	    // TODO: Clean this up in a wrapper or something...gross....
+	    if (this.data && this.data.removeEventListener) {
+	        this.data.removeEventListener('error', this._boundOnError);
+	        this.data.removeEventListener('load', this._boundComplete);
+	        this.data.removeEventListener('progress', this._boundOnProgress);
+	        this.data.removeEventListener('canplaythrough', this._boundComplete);
+	    }
+
+	    if (this.xhr) {
+	        if (this.xhr.removeEventListener) {
+	            this.xhr.removeEventListener('error', this._boundXhrOnError);
+	            this.xhr.removeEventListener('abort', this._boundXhrOnAbort);
+	            this.xhr.removeEventListener('progress', this._boundOnProgress);
+	            this.xhr.removeEventListener('load', this._boundXhrOnLoad);
+	        }
+	        else {
+	            this.xhr.onerror = null;
+	            this.xhr.ontimeout = null;
+	            this.xhr.onprogress = null;
+	            this.xhr.onload = null;
+	        }
+	    }
+
+	    this.emit('complete', this);
+	};
+
+	/**
+	 * Kicks off loading of this resource.
+	 *
+	 * @fires start
+	 * @param [callback] {function} Optional callback to call once the resource is loaded.
+	 */
+	Resource.prototype.load = function (cb) {
+	    this.emit('start', this);
+
+	    // if a callback is set, listen for complete event
+	    if (cb) {
+	        this.once('complete', cb);
+	    }
+
+	    // if unset, determine the value
+	    if (this.crossOrigin === false || typeof this.crossOrigin !== 'string') {
+	        this.crossOrigin = this._determineCrossOrigin(this.url);
+	    }
+
+	    switch(this.loadType) {
+	        case Resource.LOAD_TYPE.IMAGE:
+	            this._loadImage();
+	            break;
+
+	        case Resource.LOAD_TYPE.AUDIO:
+	            this._loadElement('audio');
+	            break;
+
+	        case Resource.LOAD_TYPE.VIDEO:
+	            this._loadElement('video');
+	            break;
+
+	        case Resource.LOAD_TYPE.XHR:
+	            /* falls through */
+	        default:
+	            if (useXdr && this.crossOrigin) {
+	                this._loadXdr();
+	            }
+	            else {
+	                this._loadXhr();
+	            }
+	            break;
+	    }
+	};
+
+	/**
+	 * Loads this resources using an Image object.
+	 *
+	 * @private
+	 */
+	Resource.prototype._loadImage = function () {
+	    this.data = new Image();
+
+	    if (this.crossOrigin) {
+	        this.data.crossOrigin = this.crossOrigin;
+	    }
+
+	    this.data.src = this.url;
+
+	    this.isImage = true;
+
+	    this.data.addEventListener('error', this._boundOnError, false);
+	    this.data.addEventListener('load', this._boundComplete, false);
+	    this.data.addEventListener('progress', this._boundOnProgress, false);
+	};
+
+	/**
+	 * Loads this resources using an HTMLAudioElement or HTMLVideoElement.
+	 *
+	 * @private
+	 */
+	Resource.prototype._loadElement = function (type) {
+	    if (type === 'audio' && typeof Audio !== 'undefined') {
+	        this.data = new Audio();
+	    }
+	    else {
+	        this.data = document.createElement(type);
+	    }
+
+	    if (this.data === null) {
+	        this.error = new Error('Unsupported element ' + type);
+	        this.complete();
+	        return;
+	    }
+
+	    // support for CocoonJS Canvas+ runtime, lacks document.createElement('source')
+	    if (navigator.isCocoonJS) {
+	        this.data.src = Array.isArray(this.url) ? this.url[0] : this.url;
+	    }
+	    else {
+	        if (Array.isArray(this.url)) {
+	            for (var i = 0; i < this.url.length; ++i) {
+	                this.data.appendChild(this._createSource(type, this.url[i]));
+	            }
+	        }
+	        else {
+	            this.data.appendChild(this._createSource(type, this.url));
+	        }
+	    }
+
+	    this['is' + type[0].toUpperCase() + type.substring(1)] = true;
+
+	    this.data.addEventListener('error', this._boundOnError, false);
+	    this.data.addEventListener('load', this._boundComplete, false);
+	    this.data.addEventListener('progress', this._boundOnProgress, false);
+	    this.data.addEventListener('canplaythrough', this._boundComplete, false);
+
+	    this.data.load();
+	};
+
+	/**
+	 * Loads this resources using an XMLHttpRequest.
+	 *
+	 * @private
+	 */
+	Resource.prototype._loadXhr = function () {
+	    // if unset, determine the value
+	    if (typeof this.xhrType !== 'string') {
+	        this.xhrType = this._determineXhrType();
+	    }
+
+	    var xhr = this.xhr = new XMLHttpRequest();
+
+	    // set the request type and url
+	    xhr.open('GET', this.url, true);
+
+	    // load json as text and parse it ourselves. We do this because some browsers
+	    // *cough* safari *cough* can't deal with it.
+	    if (this.xhrType === Resource.XHR_RESPONSE_TYPE.JSON || this.xhrType === Resource.XHR_RESPONSE_TYPE.DOCUMENT) {
+	        xhr.responseType = Resource.XHR_RESPONSE_TYPE.TEXT;
+	    }
+	    else {
+	        xhr.responseType = this.xhrType;
+	    }
+
+	    xhr.addEventListener('error', this._boundXhrOnError, false);
+	    xhr.addEventListener('abort', this._boundXhrOnAbort, false);
+	    xhr.addEventListener('progress', this._boundOnProgress, false);
+	    xhr.addEventListener('load', this._boundXhrOnLoad, false);
+
+	    xhr.send();
+	};
+
+	/**
+	 * Loads this resources using an XDomainRequest. This is here because we need to support IE9 (gross).
+	 *
+	 * @private
+	 */
+	Resource.prototype._loadXdr = function () {
+	    // if unset, determine the value
+	    if (typeof this.xhrType !== 'string') {
+	        this.xhrType = this._determineXhrType();
+	    }
+
+	    var xdr = this.xhr = new XDomainRequest();
+
+	    // XDomainRequest has a few quirks. Occasionally it will abort requests
+	    // A way to avoid this is to make sure ALL callbacks are set even if not used
+	    // More info here: http://stackoverflow.com/questions/15786966/xdomainrequest-aborts-post-on-ie-9
+	    xdr.timeout = 5000;
+
+	    xdr.onerror = this._boundXhrOnError;
+	    xdr.ontimeout = this._boundXdrOnTimeout;
+	    xdr.onprogress = this._boundOnProgress;
+	    xdr.onload = this._boundXhrOnLoad;
+
+	    xdr.open('GET', this.url, true);
+
+	    //  Note: The xdr.send() call is wrapped in a timeout to prevent an issue with the interface where some requests are lost
+	    //  if multiple XDomainRequests are being sent at the same time.
+	    // Some info here: https://github.com/photonstorm/phaser/issues/1248
+	    setTimeout(function () {
+	        xdr.send();
+	    }, 0);
+	};
+
+	/**
+	 * Creates a source used in loading via an element.
+	 *
+	 * @param type {string} The element type (video or audio).
+	 * @param url {string} The source URL to load from.
+	 * @param [mime] {string} The mime type of the video
+	 * @private
+	 */
+	Resource.prototype._createSource = function (type, url, mime) {
+	    if (!mime) {
+	        mime = type + '/' + url.substr(url.lastIndexOf('.') + 1);
+	    }
+
+	    var source = document.createElement('source');
+
+	    source.src = url;
+	    source.type = mime;
+
+	    return source;
+	};
+
+	/**
+	 * Called if a load errors out.
+	 *
+	 * @param event {Event} The error event from the element that emits it.
+	 * @private
+	 */
+	Resource.prototype._onError = function (event) {
+	    this.error = new Error('Failed to load element using ' + event.target.nodeName);
+	    this.complete();
+	};
+
+	/**
+	 * Called if a load progress event fires for xhr/xdr.
+	 *
+	 * @fires progress
+	 * @param event {XMLHttpRequestProgressEvent|Event}
+	 * @private
+	 */
+	Resource.prototype._onProgress =  function (event) {
+	    if (event && event.lengthComputable) {
+	        this.emit('progress', this, event.loaded / event.total);
+	    }
+	};
+
+	/**
+	 * Called if an error event fires for xhr/xdr.
+	 *
+	 * @param event {XMLHttpRequestErrorEvent|Event}
+	 * @private
+	 */
+	Resource.prototype._xhrOnError = function () {
+	    this.error = new Error(
+	        reqType(this.xhr) + ' Request failed. ' +
+	        'Status: ' + this.xhr.status + ', text: "' + this.xhr.statusText + '"'
+	    );
+
+	    this.complete();
+	};
+
+	/**
+	 * Called if an abort event fires for xhr.
+	 *
+	 * @param event {XMLHttpRequestAbortEvent}
+	 * @private
+	 */
+	Resource.prototype._xhrOnAbort = function () {
+	    this.error = new Error(reqType(this.xhr) + ' Request was aborted by the user.');
+	    this.complete();
+	};
+
+	/**
+	 * Called if a timeout event fires for xdr.
+	 *
+	 * @param event {Event}
+	 * @private
+	 */
+	Resource.prototype._xdrOnTimeout = function () {
+	    this.error = new Error(reqType(this.xhr) + ' Request timed out.');
+	    this.complete();
+	};
+
+	/**
+	 * Called when data successfully loads from an xhr/xdr request.
+	 *
+	 * @param event {XMLHttpRequestLoadEvent|Event}
+	 * @private
+	 */
+	Resource.prototype._xhrOnLoad = function () {
+	    var xhr = this.xhr,
+	        status = xhr.status !== undefined ? xhr.status : 200; //XDR has no `.status`, assume 200.
+
+	    // status can be 0 when using the file:// protocol, also check if a response was found
+	    if (status === 200 || status === 204 || (status === 0 && xhr.responseText.length > 0)) {
+	        // if text, just return it
+	        if (this.xhrType === Resource.XHR_RESPONSE_TYPE.TEXT) {
+	            this.data = xhr.responseText;
+	        }
+	        // if json, parse into json object
+	        else if (this.xhrType === Resource.XHR_RESPONSE_TYPE.JSON) {
+	            try {
+	                this.data = JSON.parse(xhr.responseText);
+	                this.isJson = true;
+	            } catch(e) {
+	                this.error = new Error('Error trying to parse loaded json:', e);
+	            }
+	        }
+	        // if xml, parse into an xml document or div element
+	        else if (this.xhrType === Resource.XHR_RESPONSE_TYPE.DOCUMENT) {
+	            try {
+	                if (window.DOMParser) {
+	                    var domparser = new DOMParser();
+	                    this.data = domparser.parseFromString(xhr.responseText, 'text/xml');
+	                }
+	                else {
+	                    var div = document.createElement('div');
+	                    div.innerHTML = xhr.responseText;
+	                    this.data = div;
+	                }
+	                this.isXml = true;
+	            } catch (e) {
+	                this.error = new Error('Error trying to parse loaded xml:', e);
+	            }
+	        }
+	        // other types just return the response
+	        else {
+	            this.data = xhr.response || xhr.responseText;
+	        }
+	    }
+	    else {
+	        this.error = new Error('[' + xhr.status + ']' + xhr.statusText + ':' + xhr.responseURL);
+	    }
+
+	    this.complete();
+	};
+
+	function reqType(xhr) {
+	    return xhr.toString().replace('object ', '');
+	}
+
+	/**
+	 * Sets the `crossOrigin` property for this resource based on if the url
+	 * for this resource is cross-origin. If crossOrigin was manually set, this
+	 * function does nothing.
+	 *
+	 * @private
+	 * @param url {string} The url to test.
+	 * @param [location=window.location] {object} The location object to test against.
+	 * @return {string} The crossOrigin value to use (or empty string for none).
+	 */
+	Resource.prototype._determineCrossOrigin = function (url, loc) {
+	    // data: and javascript: urls are considered same-origin
+	    if (url.indexOf('data:') === 0) {
+	        return '';
+	    }
+
+	    // default is window.location
+	    loc = loc || window.location;
+
+	    if (!tempAnchor) {
+	        tempAnchor = document.createElement('a');
+	    }
+
+	    // let the browser determine the full href for the url of this resource and then
+	    // parse with the node url lib, we can't use the properties of the anchor element
+	    // because they don't work in IE9 :(
+	    tempAnchor.href = url;
+	    url = _url.parse(tempAnchor.href);
+
+	    var samePort = (!url.port && loc.port === '') || (url.port === loc.port);
+
+	    // if cross origin
+	    if (url.hostname !== loc.hostname || !samePort || url.protocol !== loc.protocol) {
+	        return 'anonymous';
+	    }
+
+	    return '';
+	};
+
+	/**
+	 * Determines the responseType of an XHR request based on the extension of the
+	 * resource being loaded.
+	 *
+	 * @private
+	 * @return {Resource.XHR_RESPONSE_TYPE} The responseType to use.
+	 */
+	Resource.prototype._determineXhrType = function () {
+	    return Resource._xhrTypeMap[this._getExtension()] || Resource.XHR_RESPONSE_TYPE.TEXT;
+	};
+
+	Resource.prototype._determineLoadType = function () {
+	    return Resource._loadTypeMap[this._getExtension()] || Resource.LOAD_TYPE.XHR;
+	};
+
+	Resource.prototype._getExtension = function () {
+	    var url = this.url,
+	        ext;
+
+	    if (this.isDataUrl) {
+	        var slashIndex = url.indexOf('/');
+	        ext = url.substring(slashIndex + 1, url.indexOf(';', slashIndex));
+	    }
+	    else {
+	        var queryStart = url.indexOf('?');
+	        if (queryStart !== -1) {
+	            url = url.substring(0, queryStart);
+	        }
+
+	        ext = url.substring(url.lastIndexOf('.') + 1);
+	    }
+
+	    return ext;
+	};
+
+	/**
+	 * Determines the mime type of an XHR request based on the responseType of
+	 * resource being loaded.
+	 *
+	 * @private
+	 * @return {string} The mime type to use.
+	 */
+	Resource.prototype._getMimeFromXhrType = function (type) {
+	    switch(type) {
+	        case Resource.XHR_RESPONSE_TYPE.BUFFER:
+	            return 'application/octet-binary';
+
+	        case Resource.XHR_RESPONSE_TYPE.BLOB:
+	            return 'application/blob';
+
+	        case Resource.XHR_RESPONSE_TYPE.DOCUMENT:
+	            return 'application/xml';
+
+	        case Resource.XHR_RESPONSE_TYPE.JSON:
+	            return 'application/json';
+
+	        case Resource.XHR_RESPONSE_TYPE.DEFAULT:
+	        case Resource.XHR_RESPONSE_TYPE.TEXT:
+	            /* falls through */
+	        default:
+	            return 'text/plain';
+
+	    }
+	};
+
+	/**
+	 * The types of loading a resource can use.
+	 *
+	 * @static
+	 * @constant
+	 * @property {object} LOAD_TYPE
+	 * @property {number} LOAD_TYPE.XHR - Uses XMLHttpRequest to load the resource.
+	 * @property {number} LOAD_TYPE.IMAGE - Uses an `Image` object to load the resource.
+	 * @property {number} LOAD_TYPE.AUDIO - Uses an `Audio` object to load the resource.
+	 * @property {number} LOAD_TYPE.VIDEO - Uses a `Video` object to load the resource.
+	 */
+	Resource.LOAD_TYPE = {
+	    XHR:    1,
+	    IMAGE:  2,
+	    AUDIO:  3,
+	    VIDEO:  4
+	};
+
+	/**
+	 * The XHR ready states, used internally.
+	 *
+	 * @static
+	 * @constant
+	 * @property {object} XHR_READY_STATE
+	 * @property {number} XHR_READY_STATE.UNSENT - open()has not been called yet.
+	 * @property {number} XHR_READY_STATE.OPENED - send()has not been called yet.
+	 * @property {number} XHR_READY_STATE.HEADERS_RECEIVED - send() has been called, and headers and status are available.
+	 * @property {number} XHR_READY_STATE.LOADING - Downloading; responseText holds partial data.
+	 * @property {number} XHR_READY_STATE.DONE - The operation is complete.
+	 */
+	Resource.XHR_READY_STATE = {
+	    UNSENT: 0,
+	    OPENED: 1,
+	    HEADERS_RECEIVED: 2,
+	    LOADING: 3,
+	    DONE: 4
+	};
+
+	/**
+	 * The XHR ready states, used internally.
+	 *
+	 * @static
+	 * @constant
+	 * @property {object} XHR_RESPONSE_TYPE
+	 * @property {string} XHR_RESPONSE_TYPE.DEFAULT - defaults to text
+	 * @property {string} XHR_RESPONSE_TYPE.BUFFER - ArrayBuffer
+	 * @property {string} XHR_RESPONSE_TYPE.BLOB - Blob
+	 * @property {string} XHR_RESPONSE_TYPE.DOCUMENT - Document
+	 * @property {string} XHR_RESPONSE_TYPE.JSON - Object
+	 * @property {string} XHR_RESPONSE_TYPE.TEXT - String
+	 */
+	Resource.XHR_RESPONSE_TYPE = {
+	    DEFAULT:    'text',
+	    BUFFER:     'arraybuffer',
+	    BLOB:       'blob',
+	    DOCUMENT:   'document',
+	    JSON:       'json',
+	    TEXT:       'text'
+	};
+
+	Resource._loadTypeMap = {
+	    'gif':      Resource.LOAD_TYPE.IMAGE,
+	    'png':      Resource.LOAD_TYPE.IMAGE,
+	    'bmp':      Resource.LOAD_TYPE.IMAGE,
+	    'jpg':      Resource.LOAD_TYPE.IMAGE,
+	    'jpeg':     Resource.LOAD_TYPE.IMAGE,
+	    'tif':      Resource.LOAD_TYPE.IMAGE,
+	    'tiff':     Resource.LOAD_TYPE.IMAGE,
+	    'webp':     Resource.LOAD_TYPE.IMAGE,
+	    'tga':      Resource.LOAD_TYPE.IMAGE
+	};
+
+	Resource._xhrTypeMap = {
+	    // xml
+	    'xhtml':    Resource.XHR_RESPONSE_TYPE.DOCUMENT,
+	    'html':     Resource.XHR_RESPONSE_TYPE.DOCUMENT,
+	    'htm':      Resource.XHR_RESPONSE_TYPE.DOCUMENT,
+	    'xml':      Resource.XHR_RESPONSE_TYPE.DOCUMENT,
+	    'tmx':      Resource.XHR_RESPONSE_TYPE.DOCUMENT,
+	    'tsx':      Resource.XHR_RESPONSE_TYPE.DOCUMENT,
+	    'svg':      Resource.XHR_RESPONSE_TYPE.DOCUMENT,
+
+	    // images
+	    'gif':      Resource.XHR_RESPONSE_TYPE.BLOB,
+	    'png':      Resource.XHR_RESPONSE_TYPE.BLOB,
+	    'bmp':      Resource.XHR_RESPONSE_TYPE.BLOB,
+	    'jpg':      Resource.XHR_RESPONSE_TYPE.BLOB,
+	    'jpeg':     Resource.XHR_RESPONSE_TYPE.BLOB,
+	    'tif':      Resource.XHR_RESPONSE_TYPE.BLOB,
+	    'tiff':     Resource.XHR_RESPONSE_TYPE.BLOB,
+	    'webp':     Resource.XHR_RESPONSE_TYPE.BLOB,
+	    'tga':      Resource.XHR_RESPONSE_TYPE.BLOB,
+
+	    // json
+	    'json':     Resource.XHR_RESPONSE_TYPE.JSON,
+
+	    // text
+	    'text':     Resource.XHR_RESPONSE_TYPE.TEXT,
+	    'txt':      Resource.XHR_RESPONSE_TYPE.TEXT
+	};
+
+	/**
+	 * Sets the load type to be used for a specific extension.
+	 *
+	 * @static
+	 * @param extname {string} The extension to set the type for, e.g. "png" or "fnt"
+	 * @param loadType {Resource.LOAD_TYPE} The load type to set it to.
+	 */
+	Resource.setExtensionLoadType = function (extname, loadType) {
+	    setExtMap(Resource._loadTypeMap, extname, loadType);
+	};
+
+	/**
+	 * Sets the load type to be used for a specific extension.
+	 *
+	 * @static
+	 * @param extname {string} The extension to set the type for, e.g. "png" or "fnt"
+	 * @param xhrType {Resource.XHR_RESPONSE_TYPE} The xhr type to set it to.
+	 */
+	Resource.setExtensionXhrType = function (extname, xhrType) {
+	    setExtMap(Resource._xhrTypeMap, extname, xhrType);
+	};
+
+	function setExtMap(map, extname, val) {
+	    if (extname && extname.indexOf('.') === 0) {
+	        extname = extname.substring(1);
+	    }
+
+	    if (!extname) {
+	        return;
+	    }
+
+	    map[extname] = val;
+	}
+
+	},{"eventemitter3":10,"url":8}],15:[function(require,module,exports){
+	module.exports = {
+
+	    // private property
+	    _keyStr: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=",
+
+	    encodeBinary: function (input) {
+	        var output = "";
+	        var bytebuffer;
+	        var encodedCharIndexes = new Array(4);
+	        var inx = 0;
+	        var jnx = 0;
+	        var paddingBytes = 0;
+
+	        while (inx < input.length) {
+	            // Fill byte buffer array
+	            bytebuffer = new Array(3);
+	            for (jnx = 0; jnx < bytebuffer.length; jnx++) {
+	                if (inx < input.length) {
+	                    // throw away high-order byte, as documented at:
+	                    // https://developer.mozilla.org/En/Using_XMLHttpRequest#Handling_binary_data
+	                    bytebuffer[jnx] = input.charCodeAt(inx++) & 0xff;
+	                }
+	                else {
+	                    bytebuffer[jnx] = 0;
+	                }
+	            }
+
+	            // Get each encoded character, 6 bits at a time
+	            // index 1: first 6 bits
+	            encodedCharIndexes[0] = bytebuffer[0] >> 2;
+	            // index 2: second 6 bits (2 least significant bits from input byte 1 + 4 most significant bits from byte 2)
+	            encodedCharIndexes[1] = ((bytebuffer[0] & 0x3) << 4) | (bytebuffer[1] >> 4);
+	            // index 3: third 6 bits (4 least significant bits from input byte 2 + 2 most significant bits from byte 3)
+	            encodedCharIndexes[2] = ((bytebuffer[1] & 0x0f) << 2) | (bytebuffer[2] >> 6);
+	            // index 3: forth 6 bits (6 least significant bits from input byte 3)
+	            encodedCharIndexes[3] = bytebuffer[2] & 0x3f;
+
+	            // Determine whether padding happened, and adjust accordingly
+	            paddingBytes = inx - (input.length - 1);
+	            switch (paddingBytes) {
+	                case 2:
+	                    // Set last 2 characters to padding char
+	                    encodedCharIndexes[3] = 64;
+	                    encodedCharIndexes[2] = 64;
+	                    break;
+
+	                case 1:
+	                    // Set last character to padding char
+	                    encodedCharIndexes[3] = 64;
+	                    break;
+
+	                default:
+	                    break; // No padding - proceed
+	            }
+
+	            // Now we will grab each appropriate character out of our keystring
+	            // based on our index array and append it to the output string
+	            for (jnx = 0; jnx < encodedCharIndexes.length; jnx++) {
+	                output += this._keyStr.charAt(encodedCharIndexes[jnx]);
+	            }
+	        }
+	        return output;
+	    }
+	};
+
+	},{}],16:[function(require,module,exports){
+	module.exports = require('./Loader');
+
+	module.exports.Resource = require('./Resource');
+
+	module.exports.middleware = {
+	    caching: {
+	        memory: require('./middlewares/caching/memory')
+	    },
+	    parsing: {
+	        blob: require('./middlewares/parsing/blob')
+	    }
+	};
+
+	},{"./Loader":13,"./Resource":14,"./middlewares/caching/memory":17,"./middlewares/parsing/blob":18}],17:[function(require,module,exports){
+	// a simple in-memory cache for resources
+	var cache = {};
+
+	module.exports = function () {
+	    return function (resource, next) {
+	        // if cached, then set data and complete the resource
+	        if (cache[resource.url]) {
+	            resource.data = cache[resource.url];
+	            resource.complete();
+	        }
+	        // if not cached, wait for complete and store it in the cache.
+	        else {
+	            resource.once('complete', function () {
+	               cache[this.url] = this.data;
+	            });
+	        }
+	        
+	        next();
+	    };
+	};
+
+	},{}],18:[function(require,module,exports){
+	var Resource = require('../../Resource'),
+	    b64 = require('../../b64');
+
+	window.URL = window.URL || window.webkitURL;
+
+	// a middleware for transforming XHR loaded Blobs into more useful objects
+
+	module.exports = function () {
+	    return function (resource, next) {
+	        if (!resource.data) {
+	            return next();
+	        }
+
+	        // if this was an XHR load of a blob
+	        if (resource.xhr && resource.xhrType === Resource.XHR_RESPONSE_TYPE.BLOB) {
+	            // if there is no blob support we probably got a binary string back
+	            if (!window.Blob || typeof resource.data === 'string') {
+	                var type = resource.xhr.getResponseHeader('content-type');
+
+	                // this is an image, convert the binary string into a data url
+	                if (type && type.indexOf('image') === 0) {
+	                    resource.data = new Image();
+	                    resource.data.src = 'data:' + type + ';base64,' + b64.encodeBinary(resource.xhr.responseText);
+
+	                    resource.isImage = true;
+
+	                    // wait until the image loads and then callback
+	                    resource.data.onload = function () {
+	                        resource.data.onload = null;
+
+	                        next();
+	                    };
+	                }
+	            }
+	            // if content type says this is an image, then we should transform the blob into an Image object
+	            else if (resource.data.type.indexOf('image') === 0) {
+	                var src = URL.createObjectURL(resource.data);
+
+	                resource.blob = resource.data;
+	                resource.data = new Image();
+	                resource.data.src = src;
+
+	                resource.isImage = true;
+
+	                // cleanup the no longer used blob after the image loads
+	                resource.data.onload = function () {
+	                    URL.revokeObjectURL(src);
+	                    resource.data.onload = null;
+
+	                    next();
+	                };
+	            }
+	        }
+	        else {
+	            next();
+	        }
+	    };
+	};
+
+	},{"../../Resource":14,"../../b64":15}],19:[function(require,module,exports){
 	var core = require('../core');
 
 	// add some extra variables to the container..
@@ -13893,11 +16613,16 @@
 		   	displayObject.renderId = this.renderId;
 		}
 
-		var children = displayObject.children;
 
-		for (var i = children.length - 1; i >= 0; i--) {
+		if(displayObject.interactiveChildren)
+		{
+
+			var children = displayObject.children;
+
+			for (var i = children.length - 1; i >= 0; i--) {
 			
-			this.updateAccessibleObjects(children[i]);
+				this.updateAccessibleObjects(children[i]);
+			}
 		}
 	};
 
@@ -14133,7 +16858,7 @@
 	core.CanvasRenderer.registerPlugin('accessibility', AccessibilityManager);
 
 
-	},{"../core":23,"./accessibleTarget":14}],14:[function(require,module,exports){
+	},{"../core":29,"./accessibleTarget":20}],20:[function(require,module,exports){
 	/**
 	 * Default property values of accessible objects
 	 * used by {@link PIXI.accessibility.AccessibilityManager}.
@@ -14179,7 +16904,7 @@
 
 	module.exports = accessibleTarget;
 
-	},{}],15:[function(require,module,exports){
+	},{}],21:[function(require,module,exports){
 	/**
 	 * @file        Main export of the PIXI accessibility library
 	 * @author      Mat Groves <mat@goodboydigital.com>
@@ -14195,7 +16920,7 @@
 	    AccessibilityManager: require('./AccessibilityManager')
 	};
 
-	},{"./AccessibilityManager":13,"./accessibleTarget":14}],16:[function(require,module,exports){
+	},{"./AccessibilityManager":19,"./accessibleTarget":20}],22:[function(require,module,exports){
 	/**
 	 * Constant values used in pixi
 	 *
@@ -14209,7 +16934,7 @@
 	     * @constant
 	     * @property {string} VERSION
 	     */
-	    VERSION: require('../../package.json').version,
+	    VERSION: '3.0.10',
 
 	    /**
 	     * @property {number} PI_2 - Two Pi
@@ -14418,7 +17143,7 @@
 
 	module.exports = CONST;
 
-	},{"../../package.json":12}],17:[function(require,module,exports){
+	},{}],23:[function(require,module,exports){
 	var math = require('../math'),
 	    utils = require('../utils'),
 	    DisplayObject = require('./DisplayObject'),
@@ -15062,7 +17787,7 @@
 	    this.children = null;
 	};
 
-	},{"../math":26,"../textures/RenderTexture":64,"../utils":70,"./DisplayObject":18}],18:[function(require,module,exports){
+	},{"../math":33,"../textures/RenderTexture":71,"../utils":77,"./DisplayObject":24}],24:[function(require,module,exports){
 	var math = require('../math'),
 	    RenderTexture = require('../textures/RenderTexture'),
 	    EventEmitter = require('eventemitter3'),
@@ -15284,6 +18009,8 @@
 	     * Sets a mask for the displayObject. A mask is an object that limits the visibility of an object to the shape of the mask applied to it.
 	     * In PIXI a regular mask must be a PIXI.Graphics or a PIXI.Sprite object. This allows for much faster masking in canvas as it utilises shape clipping.
 	     * To remove a mask, set this property to null.
+	     *
+	     * @todo For the moment, PIXI.CanvasRenderer doesn't support PIXI.Sprite as mask.
 	     *
 	     * @member {PIXI.Graphics|PIXI.Sprite}
 	     * @memberof PIXI.DisplayObject#
@@ -15626,7 +18353,7 @@
 	    this.filterArea = null;
 	};
 
-	},{"../const":16,"../math":26,"../textures/RenderTexture":64,"eventemitter3":10}],19:[function(require,module,exports){
+	},{"../const":22,"../math":33,"../textures/RenderTexture":71,"eventemitter3":10}],25:[function(require,module,exports){
 	var Container = require('../display/Container'),
 	    Texture = require('../textures/Texture'),
 	    CanvasBuffer = require('../renderers/canvas/utils/CanvasBuffer'),
@@ -16811,7 +19538,7 @@
 	    this._localBounds = null;
 	};
 
-	},{"../const":16,"../display/Container":17,"../math":26,"../renderers/canvas/utils/CanvasBuffer":38,"../renderers/canvas/utils/CanvasGraphics":39,"../textures/Texture":65,"./GraphicsData":20}],20:[function(require,module,exports){
+	},{"../const":22,"../display/Container":23,"../math":33,"../renderers/canvas/utils/CanvasBuffer":45,"../renderers/canvas/utils/CanvasGraphics":46,"../textures/Texture":72,"./GraphicsData":26}],26:[function(require,module,exports){
 	/**
 	 * A GraphicsData object.
 	 *
@@ -16904,7 +19631,7 @@
 	    this.shape = null;
 	};
 
-	},{}],21:[function(require,module,exports){
+	},{}],27:[function(require,module,exports){
 	var utils = require('../../utils'),
 	    math = require('../../math'),
 	    CONST = require('../../const'),
@@ -17809,7 +20536,7 @@
 	    return true;
 	};
 
-	},{"../../const":16,"../../math":26,"../../renderers/webgl/WebGLRenderer":42,"../../renderers/webgl/utils/ObjectRenderer":56,"../../utils":70,"./WebGLGraphicsData":22,"earcut":9}],22:[function(require,module,exports){
+	},{"../../const":22,"../../math":33,"../../renderers/webgl/WebGLRenderer":49,"../../renderers/webgl/utils/ObjectRenderer":63,"../../utils":77,"./WebGLGraphicsData":28,"earcut":9}],28:[function(require,module,exports){
 	/**
 	 * An object containing WebGL specific properties to be used by the WebGL renderer
 	 *
@@ -17927,7 +20654,7 @@
 	    this.glIndices = null;
 	};
 
-	},{}],23:[function(require,module,exports){
+	},{}],29:[function(require,module,exports){
 	/**
 	 * @file        Main export of the PIXI core library
 	 * @author      Mat Groves <mat@goodboydigital.com>
@@ -17976,9 +20703,12 @@
 
 	    // renderers - webgl
 	    WebGLRenderer:          require('./renderers/webgl/WebGLRenderer'),
-	    WebGLManager:          require('./renderers/webgl/managers/WebGLManager'),
+	    WebGLManager:           require('./renderers/webgl/managers/WebGLManager'),
 	    ShaderManager:          require('./renderers/webgl/managers/ShaderManager'),
 	    Shader:                 require('./renderers/webgl/shaders/Shader'),
+	    TextureShader:          require('./renderers/webgl/shaders/TextureShader'),
+	    PrimitiveShader:        require('./renderers/webgl/shaders/PrimitiveShader'),
+	    ComplexPrimitiveShader: require('./renderers/webgl/shaders/ComplexPrimitiveShader'),
 	    ObjectRenderer:         require('./renderers/webgl/utils/ObjectRenderer'),
 	    RenderTarget:           require('./renderers/webgl/utils/RenderTarget'),
 
@@ -18020,7 +20750,171 @@
 	    }
 	});
 
-	},{"./const":16,"./display/Container":17,"./display/DisplayObject":18,"./graphics/Graphics":19,"./graphics/GraphicsData":20,"./graphics/webgl/GraphicsRenderer":21,"./math":26,"./particles/ParticleContainer":32,"./particles/webgl/ParticleRenderer":34,"./renderers/canvas/CanvasRenderer":37,"./renderers/canvas/utils/CanvasBuffer":38,"./renderers/canvas/utils/CanvasGraphics":39,"./renderers/webgl/WebGLRenderer":42,"./renderers/webgl/filters/AbstractFilter":43,"./renderers/webgl/filters/FXAAFilter":44,"./renderers/webgl/filters/SpriteMaskFilter":45,"./renderers/webgl/managers/ShaderManager":49,"./renderers/webgl/managers/WebGLManager":51,"./renderers/webgl/shaders/Shader":54,"./renderers/webgl/utils/ObjectRenderer":56,"./renderers/webgl/utils/RenderTarget":58,"./sprites/Sprite":60,"./sprites/webgl/SpriteRenderer":61,"./text/Text":62,"./textures/BaseTexture":63,"./textures/RenderTexture":64,"./textures/Texture":65,"./textures/TextureUvs":66,"./textures/VideoBaseTexture":67,"./ticker":69,"./utils":70}],24:[function(require,module,exports){
+	},{"./const":22,"./display/Container":23,"./display/DisplayObject":24,"./graphics/Graphics":25,"./graphics/GraphicsData":26,"./graphics/webgl/GraphicsRenderer":27,"./math":33,"./particles/ParticleContainer":39,"./particles/webgl/ParticleRenderer":41,"./renderers/canvas/CanvasRenderer":44,"./renderers/canvas/utils/CanvasBuffer":45,"./renderers/canvas/utils/CanvasGraphics":46,"./renderers/webgl/WebGLRenderer":49,"./renderers/webgl/filters/AbstractFilter":50,"./renderers/webgl/filters/FXAAFilter":51,"./renderers/webgl/filters/SpriteMaskFilter":52,"./renderers/webgl/managers/ShaderManager":56,"./renderers/webgl/managers/WebGLManager":58,"./renderers/webgl/shaders/ComplexPrimitiveShader":59,"./renderers/webgl/shaders/PrimitiveShader":60,"./renderers/webgl/shaders/Shader":61,"./renderers/webgl/shaders/TextureShader":62,"./renderers/webgl/utils/ObjectRenderer":63,"./renderers/webgl/utils/RenderTarget":65,"./sprites/Sprite":67,"./sprites/webgl/SpriteRenderer":68,"./text/Text":69,"./textures/BaseTexture":70,"./textures/RenderTexture":71,"./textures/Texture":72,"./textures/TextureUvs":73,"./textures/VideoBaseTexture":74,"./ticker":76,"./utils":77}],30:[function(require,module,exports){
+	// Your friendly neighbour https://en.wikipedia.org/wiki/Dihedral_group of order 16
+
+	var ux = [1, 1, 0, -1, -1, -1, 0, 1, 1, 1, 0, -1, -1, -1, 0, 1];
+	var uy = [0, 1, 1, 1, 0, -1, -1, -1, 0, 1, 1, 1, 0, -1, -1, -1];
+	var vx = [0, -1, -1, -1, 0, 1, 1, 1, 0, 1, 1, 1, 0, -1, -1, -1];
+	var vy = [1, 1, 0, -1, -1, -1, 0, 1, -1, -1, 0, 1, 1, 1, 0, -1];
+	var tempMatrices = [];
+	var Matrix = require('./Matrix');
+
+	var mul = [];
+
+	function signum(x) {
+	    if (x < 0) {
+	        return -1;
+	    }
+	    if (x > 0) {
+	        return 1;
+	    }
+	    return 0;
+	}
+
+	function init() {
+	    for (var i = 0; i < 16; i++) {
+	        var row = [];
+	        mul.push(row);
+	        for (var j = 0; j < 16; j++) {
+	            var _ux = signum(ux[i] * ux[j] + vx[i] * uy[j]);
+	            var _uy = signum(uy[i] * ux[j] + vy[i] * uy[j]);
+	            var _vx = signum(ux[i] * vx[j] + vx[i] * vy[j]);
+	            var _vy = signum(uy[i] * vx[j] + vy[i] * vy[j]);
+	            for (var k = 0; k < 16; k++) {
+	                if (ux[k] === _ux && uy[k] === _uy && vx[k] === _vx && vy[k] === _vy) {
+	                    row.push(k);
+	                    break;
+	                }
+	            }
+	        }
+	    }
+
+	    for (i=0;i<16;i++) {
+	        var mat = new Matrix();
+	        mat.set(ux[i], uy[i], vx[i], vy[i], 0, 0);
+	        tempMatrices.push(mat);
+	    }
+	}
+
+	init();
+
+	/**
+	 * Implements Dihedral Group D_8, see [group D4]{@link http://mathworld.wolfram.com/DihedralGroupD4.html}, D8 is the same but with diagonals
+	 * Used for texture rotations
+	 * Vector xX(i), xY(i) is U-axis of sprite with rotation i
+	 * Vector yY(i), yY(i) is V-axis of sprite with rotation i
+	 * Rotations: 0 grad (0), 90 grad (2), 180 grad (4), 270 grad (6)
+	 * Mirrors: vertical (8), main diagonal (10), horizontal (12), reverse diagonal (14)
+	 * This is the small part of gameofbombs.com portal system. It works.
+	 * @author Ivan @ivanpopelyshev
+	 *
+	 * @namespace PIXI.GroupD8
+	 */
+	var GroupD8 = {
+	    E: 0,
+	    SE: 1,
+	    S: 2,
+	    SW: 3,
+	    W: 4,
+	    NW: 5,
+	    N: 6,
+	    NE: 7,
+	    MIRROR_VERTICAL: 8,
+	    MIRROR_HORIZONTAL: 12,
+	    uX: function (ind) {
+	        return ux[ind];
+	    },
+	    uY: function (ind) {
+	        return uy[ind];
+	    },
+	    vX: function (ind) {
+	        return vx[ind];
+	    },
+	    vY: function (ind) {
+	        return vy[ind];
+	    },
+	    inv: function (rotation) {
+	        if (rotation & 8) {
+	            return rotation & 15;
+	        }
+	        return (-rotation) & 7;
+	    },
+	    add: function (rotationSecond, rotationFirst) {
+	        return mul[rotationSecond][rotationFirst];
+	    },
+	    sub: function (rotationSecond, rotationFirst) {
+	        return mul[rotationSecond][GroupD8.inv(rotationFirst)];
+	    },
+	    /**
+	     * Adds 180 degrees to rotation. Commutative operation
+	     * @param rotation
+	     * @returns {number}
+	     */
+	    rotate180: function (rotation) {
+	        return rotation ^ 4;
+	    },
+	    /**
+	     * I dont know why sometimes width and heights needs to be swapped. We'll fix it later.
+	     * @param rotation
+	     * @returns {boolean}
+	     */
+	    isSwapWidthHeight: function(rotation) {
+	        return (rotation & 3) === 2;
+	    },
+	    byDirection: function (dx, dy) {
+	        if (Math.abs(dx) * 2 <= Math.abs(dy)) {
+	            if (dy >= 0) {
+	                return GroupD8.S;
+	            }
+	            else {
+	                return GroupD8.N;
+	            }
+	        } else if (Math.abs(dy) * 2 <= Math.abs(dx)) {
+	            if (dx > 0) {
+	                return GroupD8.E;
+	            }
+	            else {
+	                return GroupD8.W;
+	            }
+	        } else {
+	            if (dy > 0) {
+	                if (dx > 0) {
+	                    return GroupD8.SE;
+	                }
+	                else {
+	                    return GroupD8.SW;
+	                }
+	            }
+	            else if (dx > 0) {
+	                return GroupD8.NE;
+	            }
+	            else {
+	                return GroupD8.NW;
+	            }
+	        }
+	    },
+	    /**
+	     * Helps sprite to compensate texture packer rotation.
+	     * @param matrix {PIXI.Matrix} sprite world matrix
+	     * @param rotation {number}
+	     * @param tx {number|*} sprite anchoring
+	     * @param ty {number|*} sprite anchoring
+	     */
+	    matrixAppendRotationInv: function (matrix, rotation, tx, ty) {
+	        //Packer used "rotation", we use "inv(rotation)"
+	        var mat = tempMatrices[GroupD8.inv(rotation)];
+	        tx = tx || 0;
+	        ty = ty || 0;
+	        mat.tx = tx;
+	        mat.ty = ty;
+	        matrix.append(mat);
+	    }
+	};
+
+	module.exports = GroupD8;
+
+	},{"./Matrix":31}],31:[function(require,module,exports){
 	// @todo - ignore the too many parameters warning for now
 	// should either fix it or change the jshint config
 	// jshint -W072
@@ -18460,7 +21354,7 @@
 	 */
 	Matrix.TEMP_MATRIX = new Matrix();
 
-	},{"./Point":25}],25:[function(require,module,exports){
+	},{"./Point":32}],32:[function(require,module,exports){
 	/**
 	 * The Point object represents a location in a two-dimensional coordinate system, where x represents
 	 * the horizontal axis and y represents the vertical axis.
@@ -18530,7 +21424,7 @@
 	    this.y = y || ( (y !== 0) ? this.x : 0 ) ;
 	};
 
-	},{}],26:[function(require,module,exports){
+	},{}],33:[function(require,module,exports){
 	/**
 	 * Math classes and utilities mixed into PIXI namespace.
 	 *
@@ -18544,6 +21438,7 @@
 
 	    Point:      require('./Point'),
 	    Matrix:     require('./Matrix'),
+	    GroupD8:    require('./GroupD8'),
 
 	    Circle:     require('./shapes/Circle'),
 	    Ellipse:    require('./shapes/Ellipse'),
@@ -18552,7 +21447,7 @@
 	    RoundedRectangle: require('./shapes/RoundedRectangle')
 	};
 
-	},{"./Matrix":24,"./Point":25,"./shapes/Circle":27,"./shapes/Ellipse":28,"./shapes/Polygon":29,"./shapes/Rectangle":30,"./shapes/RoundedRectangle":31}],27:[function(require,module,exports){
+	},{"./GroupD8":30,"./Matrix":31,"./Point":32,"./shapes/Circle":34,"./shapes/Ellipse":35,"./shapes/Polygon":36,"./shapes/Rectangle":37,"./shapes/RoundedRectangle":38}],34:[function(require,module,exports){
 	var Rectangle = require('./Rectangle'),
 	    CONST = require('../../const');
 
@@ -18640,7 +21535,7 @@
 	    return new Rectangle(this.x - this.radius, this.y - this.radius, this.radius * 2, this.radius * 2);
 	};
 
-	},{"../../const":16,"./Rectangle":30}],28:[function(require,module,exports){
+	},{"../../const":22,"./Rectangle":37}],35:[function(require,module,exports){
 	var Rectangle = require('./Rectangle'),
 	    CONST = require('../../const');
 
@@ -18735,7 +21630,7 @@
 	    return new Rectangle(this.x - this.width, this.y - this.height, this.width, this.height);
 	};
 
-	},{"../../const":16,"./Rectangle":30}],29:[function(require,module,exports){
+	},{"../../const":22,"./Rectangle":37}],36:[function(require,module,exports){
 	var Point = require('../Point'),
 	    CONST = require('../../const');
 
@@ -18838,7 +21733,7 @@
 	    return inside;
 	};
 
-	},{"../../const":16,"../Point":25}],30:[function(require,module,exports){
+	},{"../../const":22,"../Point":32}],37:[function(require,module,exports){
 	var CONST = require('../../const');
 
 	/**
@@ -18932,7 +21827,7 @@
 	    return false;
 	};
 
-	},{"../../const":16}],31:[function(require,module,exports){
+	},{"../../const":22}],38:[function(require,module,exports){
 	var CONST = require('../../const');
 
 	/**
@@ -19024,7 +21919,7 @@
 	    return false;
 	};
 
-	},{"../../const":16}],32:[function(require,module,exports){
+	},{"../../const":22}],39:[function(require,module,exports){
 	var Container = require('../display/Container'),
 	    CONST = require('../const');
 
@@ -19343,7 +22238,7 @@
 	    this._buffers = null;
 	};
 
-	},{"../const":16,"../display/Container":17}],33:[function(require,module,exports){
+	},{"../const":22,"../display/Container":23}],40:[function(require,module,exports){
 
 	/**
 	 * @author Mat Groves
@@ -19563,7 +22458,7 @@
 	    this.gl.deleteBuffer(this.staticBuffer);
 	};
 
-	},{}],34:[function(require,module,exports){
+	},{}],41:[function(require,module,exports){
 	var ObjectRenderer = require('../../renderers/webgl/utils/ObjectRenderer'),
 	    WebGLRenderer = require('../../renderers/webgl/WebGLRenderer'),
 	    ParticleShader = require('./ParticleShader'),
@@ -20039,7 +22934,7 @@
 	    this.tempMatrix = null;
 	};
 
-	},{"../../math":26,"../../renderers/webgl/WebGLRenderer":42,"../../renderers/webgl/utils/ObjectRenderer":56,"./ParticleBuffer":33,"./ParticleShader":35}],35:[function(require,module,exports){
+	},{"../../math":33,"../../renderers/webgl/WebGLRenderer":49,"../../renderers/webgl/utils/ObjectRenderer":63,"./ParticleBuffer":40,"./ParticleShader":42}],42:[function(require,module,exports){
 	var TextureShader = require('../../renderers/webgl/shaders/TextureShader');
 
 	/**
@@ -20117,7 +23012,7 @@
 
 	module.exports = ParticleShader;
 
-	},{"../../renderers/webgl/shaders/TextureShader":55}],36:[function(require,module,exports){
+	},{"../../renderers/webgl/shaders/TextureShader":62}],43:[function(require,module,exports){
 	var utils = require('../utils'),
 	    math = require('../math'),
 	    CONST = require('../const'),
@@ -20378,7 +23273,7 @@
 	    this._backgroundColorString = null;
 	};
 
-	},{"../const":16,"../math":26,"../utils":70,"eventemitter3":10}],37:[function(require,module,exports){
+	},{"../const":22,"../math":33,"../utils":77,"eventemitter3":10}],44:[function(require,module,exports){
 	var SystemRenderer = require('../SystemRenderer'),
 	    CanvasMaskManager = require('./utils/CanvasMaskManager'),
 	    utils = require('../../utils'),
@@ -20646,7 +23541,7 @@
 	    }
 	};
 
-	},{"../../const":16,"../../math":26,"../../utils":70,"../SystemRenderer":36,"./utils/CanvasMaskManager":40}],38:[function(require,module,exports){
+	},{"../../const":22,"../../math":33,"../../utils":77,"../SystemRenderer":43,"./utils/CanvasMaskManager":47}],45:[function(require,module,exports){
 	/**
 	 * Creates a Canvas element of the given size.
 	 *
@@ -20746,7 +23641,7 @@
 	    this.canvas = null;
 	};
 
-	},{}],39:[function(require,module,exports){
+	},{}],46:[function(require,module,exports){
 	var CONST = require('../../../const');
 
 	/**
@@ -21100,7 +23995,7 @@
 	};
 
 
-	},{"../../../const":16}],40:[function(require,module,exports){
+	},{"../../../const":22}],47:[function(require,module,exports){
 	var CanvasGraphics = require('./CanvasGraphics');
 
 	/**
@@ -21162,7 +24057,7 @@
 
 	CanvasMaskManager.prototype.destroy = function () {};
 
-	},{"./CanvasGraphics":39}],41:[function(require,module,exports){
+	},{"./CanvasGraphics":46}],48:[function(require,module,exports){
 	var utils = require('../../../utils');
 
 	/**
@@ -21414,7 +24309,7 @@
 	 */
 	CanvasTinter.tintMethod = CanvasTinter.canUseMultiply ? CanvasTinter.tintWithMultiply :  CanvasTinter.tintWithPerPixel;
 
-	},{"../../../utils":70}],42:[function(require,module,exports){
+	},{"../../../utils":77}],49:[function(require,module,exports){
 	var SystemRenderer = require('../SystemRenderer'),
 	    ShaderManager = require('./managers/ShaderManager'),
 	    MaskManager = require('./managers/MaskManager'),
@@ -21953,11 +24848,13 @@
 
 	    this.gl.useProgram(null);
 
+	    this.gl.flush();
+
 	    this.gl = null;
 	};
 
 	/**
-	 * Maps Pixi blend modes to WebGL blend modes.
+	 * Maps Pixi blend modes to WebGL blend modes. It works only for pre-multiplied textures.
 	 *
 	 * @private
 	 */
@@ -21970,9 +24867,9 @@
 	        this.blendModes = {};
 
 	        this.blendModes[CONST.BLEND_MODES.NORMAL]        = [gl.ONE,       gl.ONE_MINUS_SRC_ALPHA];
-	        this.blendModes[CONST.BLEND_MODES.ADD]           = [gl.SRC_ALPHA, gl.DST_ALPHA];
+	        this.blendModes[CONST.BLEND_MODES.ADD]           = [gl.ONE,       gl.DST_ALPHA];
 	        this.blendModes[CONST.BLEND_MODES.MULTIPLY]      = [gl.DST_COLOR, gl.ONE_MINUS_SRC_ALPHA];
-	        this.blendModes[CONST.BLEND_MODES.SCREEN]        = [gl.SRC_ALPHA, gl.ONE];
+	        this.blendModes[CONST.BLEND_MODES.SCREEN]        = [gl.ONE,       gl.ONE_MINUS_SRC_COLOR];
 	        this.blendModes[CONST.BLEND_MODES.OVERLAY]       = [gl.ONE,       gl.ONE_MINUS_SRC_ALPHA];
 	        this.blendModes[CONST.BLEND_MODES.DARKEN]        = [gl.ONE,       gl.ONE_MINUS_SRC_ALPHA];
 	        this.blendModes[CONST.BLEND_MODES.LIGHTEN]       = [gl.ONE,       gl.ONE_MINUS_SRC_ALPHA];
@@ -22002,7 +24899,7 @@
 	    }
 	};
 
-	},{"../../const":16,"../../utils":70,"../SystemRenderer":36,"./filters/FXAAFilter":44,"./managers/BlendModeManager":46,"./managers/FilterManager":47,"./managers/MaskManager":48,"./managers/ShaderManager":49,"./managers/StencilManager":50,"./utils/ObjectRenderer":56,"./utils/RenderTarget":58}],43:[function(require,module,exports){
+	},{"../../const":22,"../../utils":77,"../SystemRenderer":43,"./filters/FXAAFilter":51,"./managers/BlendModeManager":53,"./managers/FilterManager":54,"./managers/MaskManager":55,"./managers/ShaderManager":56,"./managers/StencilManager":57,"./utils/ObjectRenderer":63,"./utils/RenderTarget":65}],50:[function(require,module,exports){
 	var DefaultShader = require('../shaders/TextureShader');
 
 	/**
@@ -22114,7 +25011,7 @@
 	    }
 	};
 
-	},{"../shaders/TextureShader":55}],44:[function(require,module,exports){
+	},{"../shaders/TextureShader":62}],51:[function(require,module,exports){
 	var AbstractFilter = require('./AbstractFilter');
 	// @see https://github.com/substack/brfs/issues/25
 
@@ -22169,7 +25066,7 @@
 	    filterManager.applyFilter(shader, input, output);
 	};
 
-	},{"./AbstractFilter":43}],45:[function(require,module,exports){
+	},{"./AbstractFilter":50}],52:[function(require,module,exports){
 	var AbstractFilter = require('./AbstractFilter'),
 	    math =  require('../../../math');
 
@@ -22266,7 +25163,7 @@
 	    }
 	});
 
-	},{"../../../math":26,"./AbstractFilter":43}],46:[function(require,module,exports){
+	},{"../../../math":33,"./AbstractFilter":50}],53:[function(require,module,exports){
 	var WebGLManager = require('./WebGLManager');
 
 	/**
@@ -22310,7 +25207,7 @@
 	    return true;
 	};
 
-	},{"./WebGLManager":51}],47:[function(require,module,exports){
+	},{"./WebGLManager":58}],54:[function(require,module,exports){
 	var WebGLManager = require('./WebGLManager'),
 	    RenderTarget = require('../utils/RenderTarget'),
 	    CONST = require('../../../const'),
@@ -22762,7 +25659,7 @@
 	    this.texturePool = null;
 	};
 
-	},{"../../../const":16,"../../../math":26,"../utils/Quad":57,"../utils/RenderTarget":58,"./WebGLManager":51}],48:[function(require,module,exports){
+	},{"../../../const":22,"../../../math":33,"../utils/Quad":64,"../utils/RenderTarget":65,"./WebGLManager":58}],55:[function(require,module,exports){
 	var WebGLManager = require('./WebGLManager'),
 	    AlphaMaskFilter = require('../filters/SpriteMaskFilter');
 
@@ -22877,7 +25774,7 @@
 	};
 
 
-	},{"../filters/SpriteMaskFilter":45,"./WebGLManager":51}],49:[function(require,module,exports){
+	},{"../filters/SpriteMaskFilter":52,"./WebGLManager":58}],56:[function(require,module,exports){
 	var WebGLManager = require('./WebGLManager'),
 	    TextureShader = require('../shaders/TextureShader'),
 	    ComplexPrimitiveShader = require('../shaders/ComplexPrimitiveShader'),
@@ -23046,7 +25943,7 @@
 	    this.tempAttribState = null;
 	};
 
-	},{"../../../utils":70,"../shaders/ComplexPrimitiveShader":52,"../shaders/PrimitiveShader":53,"../shaders/TextureShader":55,"./WebGLManager":51}],50:[function(require,module,exports){
+	},{"../../../utils":77,"../shaders/ComplexPrimitiveShader":59,"../shaders/PrimitiveShader":60,"../shaders/TextureShader":62,"./WebGLManager":58}],57:[function(require,module,exports){
 	var WebGLManager = require('./WebGLManager'),
 	    utils = require('../../../utils');
 
@@ -23392,7 +26289,7 @@
 	};
 
 
-	},{"../../../utils":70,"./WebGLManager":51}],51:[function(require,module,exports){
+	},{"../../../utils":77,"./WebGLManager":58}],58:[function(require,module,exports){
 	/**
 	 * @class
 	 * @memberof PIXI
@@ -23433,7 +26330,7 @@
 	    this.renderer = null;
 	};
 
-	},{}],52:[function(require,module,exports){
+	},{}],59:[function(require,module,exports){
 	var Shader = require('./Shader');
 
 	/**
@@ -23495,7 +26392,7 @@
 	ComplexPrimitiveShader.prototype.constructor = ComplexPrimitiveShader;
 	module.exports = ComplexPrimitiveShader;
 
-	},{"./Shader":54}],53:[function(require,module,exports){
+	},{"./Shader":61}],60:[function(require,module,exports){
 	var Shader = require('./Shader');
 
 	/**
@@ -23558,7 +26455,7 @@
 	PrimitiveShader.prototype.constructor = PrimitiveShader;
 	module.exports = PrimitiveShader;
 
-	},{"./Shader":54}],54:[function(require,module,exports){
+	},{"./Shader":61}],61:[function(require,module,exports){
 	/*global console */
 	var utils = require('../../../utils');
 
@@ -24122,7 +27019,7 @@
 	    return shader;
 	};
 
-	},{"../../../utils":70}],55:[function(require,module,exports){
+	},{"../../../utils":77}],62:[function(require,module,exports){
 	var Shader = require('./Shader');
 
 	/**
@@ -24233,7 +27130,7 @@
 	    '}'
 	].join('\n');
 
-	},{"./Shader":54}],56:[function(require,module,exports){
+	},{"./Shader":61}],63:[function(require,module,exports){
 	var WebGLManager = require('../managers/WebGLManager');
 
 	/**
@@ -24291,7 +27188,7 @@
 	    // render the object
 	};
 
-	},{"../managers/WebGLManager":51}],57:[function(require,module,exports){
+	},{"../managers/WebGLManager":58}],64:[function(require,module,exports){
 	/**
 	 * Helper class to create a quad
 	 *
@@ -24446,7 +27343,7 @@
 
 
 
-	},{}],58:[function(require,module,exports){
+	},{}],65:[function(require,module,exports){
 	var math = require('../../../math'),
 	    utils = require('../../../utils'),
 	    CONST = require('../../../const'),
@@ -24768,7 +27665,7 @@
 	    this.texture = null;
 	};
 
-	},{"../../../const":16,"../../../math":26,"../../../utils":70,"./StencilMaskStack":59}],59:[function(require,module,exports){
+	},{"../../../const":22,"../../../math":33,"../../../utils":77,"./StencilMaskStack":66}],66:[function(require,module,exports){
 	/**
 	 * Generic Mask Stack data structure
 	 * @class
@@ -24801,14 +27698,16 @@
 	StencilMaskStack.prototype.constructor = StencilMaskStack;
 	module.exports = StencilMaskStack;
 
-	},{}],60:[function(require,module,exports){
+	},{}],67:[function(require,module,exports){
 	var math = require('../math'),
 	    Texture = require('../textures/Texture'),
 	    Container = require('../display/Container'),
 	    CanvasTinter = require('../renderers/canvas/utils/CanvasTinter'),
 	    utils = require('../utils'),
 	    CONST = require('../const'),
-	    tempPoint = new math.Point();
+	    tempPoint = new math.Point(),
+	    GroupD8 = math.GroupD8,
+	    canvasRenderWorldTransform = new math.Matrix();
 
 	/**
 	 * The Sprite object is the base for all textured objects that are rendered to the screen
@@ -25070,7 +27969,7 @@
 	        else
 	        {
 	        */
-	       
+
 	        var x1 = a * w1 + c * h1 + tx;
 	        var y1 = d * h1 + b * w1 + ty;
 
@@ -25204,8 +28103,8 @@
 	            wt = this.worldTransform,
 	            dx,
 	            dy,
-	            width,
-	            height;
+	            width = texture.crop.width,
+	            height = texture.crop.height;
 
 	        renderer.context.globalAlpha = this.worldAlpha;
 
@@ -25216,45 +28115,28 @@
 	            renderer.context[renderer.smoothProperty] = smoothingEnabled;
 	        }
 
-	        // If the texture is trimmed we offset by the trim x/y, otherwise we use the frame dimensions
-
-	        if(texture.rotate)
-	        {
+	        //inline GroupD8.isSwapWidthHeight
+	        if ((texture.rotate & 3) === 2) {
 	            width = texture.crop.height;
 	            height = texture.crop.width;
-
-	            dx = (texture.trim) ? texture.trim.y - this.anchor.y * texture.trim.height : this.anchor.y * -texture._frame.height;
-	            dy = (texture.trim) ? texture.trim.x - this.anchor.x * texture.trim.width : this.anchor.x * -texture._frame.width;
-	       
-	            dx += width;
-
-	            wt.tx = dy * wt.a + dx * wt.c + wt.tx;
-	            wt.ty = dy * wt.b + dx * wt.d + wt.ty;
-
-	            var temp = wt.a;
-	            wt.a  = -wt.c;
-	            wt.c  =  temp;
-
-	            temp = wt.b;
-	            wt.b  = -wt.d;
-	            wt.d  =  temp;
-
+	        }
+	        if (texture.trim) {
+	            dx = texture.crop.width/2 + texture.trim.x - this.anchor.x * texture.trim.width;
+	            dy = texture.crop.height/2 + texture.trim.y - this.anchor.y * texture.trim.height;
+	        } else {
+	            dx = (0.5 - this.anchor.x) * texture._frame.width;
+	            dy = (0.5 - this.anchor.y) * texture._frame.height;
+	        }
+	        if(texture.rotate) {
+	            wt.copy(canvasRenderWorldTransform);
+	            wt = canvasRenderWorldTransform;
+	            GroupD8.matrixAppendRotationInv(wt, texture.rotate, dx, dy);
 	            // the anchor has already been applied above, so lets set it to zero
 	            dx = 0;
 	            dy = 0;
-
 	        }
-	        else
-	        {
-	            width = texture.crop.width;
-	            height = texture.crop.height;
-
-	            dx = (texture.trim) ? texture.trim.x - this.anchor.x * texture.trim.width : this.anchor.x * -texture._frame.width;
-	            dy = (texture.trim) ? texture.trim.y - this.anchor.y * texture.trim.height : this.anchor.y * -texture._frame.height;
-	        }
-
-
-
+	        dx -= width/2;
+	        dy -= height/2;
 	        // Allow for pixel rounding
 	        if (renderer.roundPixels)
 	        {
@@ -25384,7 +28266,7 @@
 	    return new Sprite(Texture.fromImage(imageId, crossorigin, scaleMode));
 	};
 
-	},{"../const":16,"../display/Container":17,"../math":26,"../renderers/canvas/utils/CanvasTinter":41,"../textures/Texture":65,"../utils":70}],61:[function(require,module,exports){
+	},{"../const":22,"../display/Container":23,"../math":33,"../renderers/canvas/utils/CanvasTinter":48,"../textures/Texture":72,"../utils":77}],68:[function(require,module,exports){
 	var ObjectRenderer = require('../../renderers/webgl/utils/ObjectRenderer'),
 	    WebGLRenderer = require('../../renderers/webgl/WebGLRenderer'),
 	    CONST = require('../../const');
@@ -25857,7 +28739,7 @@
 	    this.shader = null;
 	};
 
-	},{"../../const":16,"../../renderers/webgl/WebGLRenderer":42,"../../renderers/webgl/utils/ObjectRenderer":56}],62:[function(require,module,exports){
+	},{"../../const":22,"../../renderers/webgl/WebGLRenderer":49,"../../renderers/webgl/utils/ObjectRenderer":63}],69:[function(require,module,exports){
 	var Sprite = require('../sprites/Sprite'),
 	    Texture = require('../textures/Texture'),
 	    math = require('../math'),
@@ -25886,6 +28768,8 @@
 	 * @param [style.strokeThickness=0] {number} A number that represents the thickness of the stroke. Default is 0 (no stroke)
 	 * @param [style.wordWrap=false] {boolean} Indicates if word wrap should be used
 	 * @param [style.wordWrapWidth=100] {number} The width at which text will wrap, it needs wordWrap to be set to true
+	 * @param [style.letterSpacing=0] {number} The amount of spacing between letters, default is 0
+	 * @param [style.breakWords=false] {boolean} Indicates if lines can be wrapped within words, it needs wordWrap to be set to true
 	 * @param [style.lineHeight] {number} The line height, a number that represents the vertical space that a letter uses
 	 * @param [style.dropShadow=false] {boolean} Set a drop shadow for the text
 	 * @param [style.dropShadowColor='#000000'] {string} A fill style to be used on the dropshadow e.g 'red', '#00FF00'
@@ -26055,6 +28939,8 @@
 	            style.strokeThickness = style.strokeThickness || 0;
 	            style.wordWrap = style.wordWrap || false;
 	            style.wordWrapWidth = style.wordWrapWidth || 100;
+	            style.breakWords = style.breakWords || false;
+	            style.letterSpacing = style.letterSpacing || 0;
 
 	            style.dropShadow = style.dropShadow || false;
 	            style.dropShadowColor = style.dropShadowColor || '#000000';
@@ -26120,7 +29006,7 @@
 	    var fontProperties = this.determineFontProperties(style.font);
 	    for (var i = 0; i < lines.length; i++)
 	    {
-	        var lineWidth = this.context.measureText(lines[i]).width;
+	        var lineWidth = this.context.measureText(lines[i]).width + ((lines[i].length - 1) * style.letterSpacing);
 	        lineWidths[i] = lineWidth;
 	        maxLineWidth = Math.max(maxLineWidth, lineWidth);
 	    }
@@ -26131,7 +29017,7 @@
 	        width += style.dropShadowDistance;
 	    }
 
-	    this.canvas.width = ( width + this.context.lineWidth ) * this.resolution;
+	    this.canvas.width = Math.ceil( ( width + this.context.lineWidth ) * this.resolution );
 
 	    // calculate text height
 	    var lineHeight = this.style.lineHeight || fontProperties.fontSize + style.strokeThickness;
@@ -26142,7 +29028,7 @@
 	        height += style.dropShadowDistance;
 	    }
 
-	    this.canvas.height = ( height + this._style.padding * 2 ) * this.resolution;
+	    this.canvas.height = Math.ceil( ( height + this._style.padding * 2 ) * this.resolution );
 
 	    this.context.scale( this.resolution, this.resolution);
 
@@ -26193,7 +29079,7 @@
 
 	            if (style.fill)
 	            {
-	                this.context.fillText(lines[i], linePositionX + xShadowOffset, linePositionY + yShadowOffset + this._style.padding);
+	                this.drawLetterSpacing(lines[i], linePositionX + xShadowOffset, linePositionY + yShadowOffset + style.padding);
 	            }
 	        }
 	    }
@@ -26218,16 +29104,61 @@
 
 	        if (style.stroke && style.strokeThickness)
 	        {
-	            this.context.strokeText(lines[i], linePositionX, linePositionY + this._style.padding);
+	            this.drawLetterSpacing(lines[i], linePositionX, linePositionY + style.padding, true);
 	        }
 
 	        if (style.fill)
 	        {
-	            this.context.fillText(lines[i], linePositionX, linePositionY + this._style.padding);
+	            this.drawLetterSpacing(lines[i], linePositionX, linePositionY + style.padding);
 	        }
 	    }
 
 	    this.updateTexture();
+	};
+
+	/**
+	 * Render the text with letter-spacing.
+	 *
+	 * @private
+	 */
+	Text.prototype.drawLetterSpacing = function(text, x, y, isStroke)
+	{
+	    var style = this._style;
+
+	    // letterSpacing of 0 means normal
+	    var letterSpacing = style.letterSpacing;
+
+	    if (letterSpacing === 0)
+	    {
+	        if (isStroke)
+	        {
+	            this.context.strokeText(text, x, y);
+	        }
+	        else
+	        {
+	            this.context.fillText(text, x, y);
+	        }
+	        return;
+	    }
+
+	    var characters = String.prototype.split.call(text, ''),
+	        index = 0,
+	        current,
+	        currentPosition = x;
+
+	    while (index < text.length)
+	    {
+	        current = characters[index++];
+	        if (isStroke) 
+	        {
+	            this.context.strokeText(current, currentPosition, y);
+	        }
+	        else
+	        {
+	            this.context.fillText(current, currentPosition, y);
+	        }
+	        currentPosition += this.context.measureText(current).width + letterSpacing;
+	    }
 	};
 
 	/**
@@ -26238,6 +29169,7 @@
 	Text.prototype.updateTexture = function ()
 	{
 	    var texture = this._texture;
+	    var style = this._style;
 
 	    texture.baseTexture.hasLoaded = true;
 	    texture.baseTexture.resolution = this.resolution;
@@ -26248,10 +29180,10 @@
 	    texture.crop.height = texture._frame.height = this.canvas.height / this.resolution;
 
 	    texture.trim.x = 0;
-	    texture.trim.y = -this._style.padding;
+	    texture.trim.y = -style.padding;
 
 	    texture.trim.width = texture._frame.width;
-	    texture.trim.height = texture._frame.height - this._style.padding*2;
+	    texture.trim.height = texture._frame.height - style.padding*2;
 
 	    this._width = this.canvas.width / this.resolution;
 	    this._height = this.canvas.height / this.resolution;
@@ -26419,22 +29351,48 @@
 	        for (var j = 0; j < words.length; j++)
 	        {
 	            var wordWidth = this.context.measureText(words[j]).width;
-	            var wordWidthWithSpace = wordWidth + this.context.measureText(' ').width;
-	            if (j === 0 || wordWidthWithSpace > spaceLeft)
+	            if (this._style.breakWords && wordWidth > wordWrapWidth) 
 	            {
-	                // Skip printing the newline if it's the first word of the line that is
-	                // greater than the word wrap width.
-	                if (j > 0)
+	                // Word should be split in the middle
+	                var characters = words[j].split('');
+	                for (var c = 0; c < characters.length; c++) 
 	                {
-	                    result += '\n';
+	                  var characterWidth = this.context.measureText(characters[c]).width;
+	                  if (characterWidth > spaceLeft) 
+	                  {
+	                    result += '\n' + characters[c];
+	                    spaceLeft = wordWrapWidth - characterWidth;
+	                  } 
+	                  else 
+	                  {
+	                    if (c === 0) 
+	                    {
+	                      result += ' ';
+	                    }
+	                    result += characters[c];
+	                    spaceLeft -= characterWidth;
+	                  }
 	                }
-	                result += words[j];
-	                spaceLeft = wordWrapWidth - wordWidth;
 	            }
-	            else
+	            else 
 	            {
-	                spaceLeft -= wordWidthWithSpace;
-	                result += ' ' + words[j];
+	                var wordWidthWithSpace = wordWidth + this.context.measureText(' ').width;
+	                if (j === 0 || wordWidthWithSpace > spaceLeft)
+	                {
+	                    // Skip printing the newline if it's the first word of the line that is
+	                    // greater than the word wrap width.
+	                    if (j > 0)
+	                    {
+	                        result += '\n';
+	                    }
+	                    result += words[j];
+	                    spaceLeft = wordWrapWidth - wordWidth;
+	                }
+	                else
+	                {
+	                    spaceLeft -= wordWidthWithSpace;
+	                    result += ' ' + words[j];
+	                }
 	            }
 	        }
 
@@ -26478,7 +29436,7 @@
 	    this._texture.destroy(destroyBaseTexture === undefined ? true : destroyBaseTexture);
 	};
 
-	},{"../const":16,"../math":26,"../sprites/Sprite":60,"../textures/Texture":65,"../utils":70}],63:[function(require,module,exports){
+	},{"../const":22,"../math":33,"../sprites/Sprite":67,"../textures/Texture":72,"../utils":77}],70:[function(require,module,exports){
 	var utils = require('../utils'),
 	    CONST = require('../const'),
 	    EventEmitter = require('eventemitter3');
@@ -26581,6 +29539,7 @@
 
 	    /**
 	     * Controls if RGB channels should be pre-multiplied by Alpha  (WebGL only)
+	     * All blend modes, and shaders written for default value. Change it on your own risk.
 	     *
 	     * @member {boolean}
 	     * @default true
@@ -26913,7 +29872,7 @@
 	    return baseTexture;
 	};
 
-	},{"../const":16,"../utils":70,"eventemitter3":10}],64:[function(require,module,exports){
+	},{"../const":22,"../utils":77,"eventemitter3":10}],71:[function(require,module,exports){
 	var BaseTexture = require('./BaseTexture'),
 	    Texture = require('./Texture'),
 	    RenderTarget = require('../renderers/webgl/utils/RenderTarget'),
@@ -27392,7 +30351,7 @@
 	    }
 	};
 
-	},{"../const":16,"../math":26,"../renderers/canvas/utils/CanvasBuffer":38,"../renderers/webgl/managers/FilterManager":47,"../renderers/webgl/utils/RenderTarget":58,"./BaseTexture":63,"./Texture":65}],65:[function(require,module,exports){
+	},{"../const":22,"../math":33,"../renderers/canvas/utils/CanvasBuffer":45,"../renderers/webgl/managers/FilterManager":54,"../renderers/webgl/utils/RenderTarget":65,"./BaseTexture":70,"./Texture":72}],72:[function(require,module,exports){
 	var BaseTexture = require('./BaseTexture'),
 	    VideoBaseTexture = require('./VideoBaseTexture'),
 	    TextureUvs = require('./TextureUvs'),
@@ -27418,7 +30377,7 @@
 	 * @param [frame] {PIXI.Rectangle} The rectangle frame of the texture to show
 	 * @param [crop] {PIXI.Rectangle} The area of original texture
 	 * @param [trim] {PIXI.Rectangle} Trimmed texture rectangle
-	 * @param [rotate] {boolean} indicates whether the texture should be rotated by 90 degrees ( used by texture packer )
+	 * @param [rotate] {number} indicates how the texture was rotated by texture packer. See {@link PIXI.GroupD8}
 	 */
 	function Texture(baseTexture, frame, crop, trim, rotate)
 	{
@@ -27508,13 +30467,16 @@
 	     */
 	    this.crop = crop || frame;//new math.Rectangle(0, 0, 1, 1);
 
-	    /**
-	     * Indicates whether the texture should be rotated by 90 degrees
-	     *
-	     * @private
-	     * @member {boolean}
-	     */
-	    this.rotate = !!rotate;
+	    this._rotate = +(rotate || 0);
+
+	    if (rotate === true) {
+	        // this is old texturepacker legacy, some games/libraries are passing "true" for rotated textures
+	        this._rotate = 2;
+	    } else {
+	        if (this._rotate % 2 !== 0) {
+	            throw 'attempt to use diamond-shaped UVs. If you are sure, set rotation manually';
+	        }
+	    }
 
 	    if (baseTexture.hasLoaded)
 	    {
@@ -27586,6 +30548,29 @@
 	                this.crop = frame;
 	            }
 
+	            if (this.valid)
+	            {
+	                this._updateUvs();
+	            }
+	        }
+	    },
+	    /**
+	     * Indicates whether the texture is rotated inside the atlas
+	     * set to 2 to compensate for texture packer rotation
+	     * set to 6 to compensate for spine packer rotation
+	     * can be used to rotate or mirror sprites
+	     * See {@link PIXI.GroupD8} for explanation
+	     *
+	     * @member {number}
+	     */
+	    rotate: {
+	        get: function ()
+	        {
+	            return this._rotate;
+	        },
+	        set: function (rotate)
+	        {
+	            this._rotate = rotate;
 	            if (this.valid)
 	            {
 	                this._updateUvs();
@@ -27818,7 +30803,7 @@
 	 */
 	Texture.EMPTY = new Texture(new BaseTexture());
 
-	},{"../math":26,"../utils":70,"./BaseTexture":63,"./TextureUvs":66,"./VideoBaseTexture":67,"eventemitter3":10}],66:[function(require,module,exports){
+	},{"../math":33,"../utils":77,"./BaseTexture":70,"./TextureUvs":73,"./VideoBaseTexture":74,"eventemitter3":10}],73:[function(require,module,exports){
 
 	/**
 	 * A standard object to store the Uvs of a texture
@@ -27844,11 +30829,13 @@
 
 	module.exports = TextureUvs;
 
+	var GroupD8 = require('../math/GroupD8');
+
 	/**
 	 * Sets the texture Uvs based on the given frame information
 	 * @param frame {PIXI.Rectangle}
 	 * @param baseFrame {PIXI.Rectangle}
-	 * @param rotate {boolean} Whether or not the frame is rotated
+	 * @param rotate {number} Rotation of frame, see {@link PIXI.GroupD8}
 	 * @private
 	 */
 	TextureUvs.prototype.set = function (frame, baseFrame, rotate)
@@ -27858,17 +30845,25 @@
 
 	    if(rotate)
 	    {
-	        this.x0 = (frame.x + frame.height) / tw;
-	        this.y0 = frame.y / th;
-
-	        this.x1 = (frame.x + frame.height) / tw;
-	        this.y1 = (frame.y + frame.width) / th;
-
-	        this.x2 = frame.x / tw;
-	        this.y2 = (frame.y + frame.width) / th;
-
-	        this.x3 = frame.x / tw;
-	        this.y3 = frame.y / th;
+	        //width and height div 2 div baseFrame size
+	        var swapWidthHeight = GroupD8.isSwapWidthHeight(rotate);
+	        var w2 = (swapWidthHeight ? frame.height : frame.width) / 2 / tw;
+	        var h2 = (swapWidthHeight ? frame.width : frame.height) / 2 / th;
+	        //coordinates of center
+	        var cX = frame.x / tw + w2;
+	        var cY = frame.y / th + h2;
+	        rotate = GroupD8.add(rotate, GroupD8.NW); //NW is top-left corner
+	        this.x0 = cX + w2 * GroupD8.uX(rotate);
+	        this.y0 = cY + h2 * GroupD8.uY(rotate);
+	        rotate = GroupD8.add(rotate, 2); //rotate 90 degrees clockwise
+	        this.x1 = cX + w2 * GroupD8.uX(rotate);
+	        this.y1 = cY + h2 * GroupD8.uY(rotate);
+	        rotate = GroupD8.add(rotate, 2);
+	        this.x2 = cX + w2 * GroupD8.uX(rotate);
+	        this.y2 = cY + h2 * GroupD8.uY(rotate);
+	        rotate = GroupD8.add(rotate, 2);
+	        this.x3 = cX + w2 * GroupD8.uX(rotate);
+	        this.y3 = cY + h2 * GroupD8.uY(rotate);
 	    }
 	    else
 	    {
@@ -27887,7 +30882,7 @@
 	    }
 	};
 
-	},{}],67:[function(require,module,exports){
+	},{"../math/GroupD8":30}],74:[function(require,module,exports){
 	var BaseTexture = require('./BaseTexture'),
 	    utils = require('../utils');
 
@@ -28124,7 +31119,7 @@
 	    return source;
 	}
 
-	},{"../utils":70,"./BaseTexture":63}],68:[function(require,module,exports){
+	},{"../utils":77,"./BaseTexture":70}],75:[function(require,module,exports){
 	var CONST = require('../const'),
 	    EventEmitter = require('eventemitter3'),
 	    // Internal event used by composed emitter
@@ -28479,7 +31474,7 @@
 
 	module.exports = Ticker;
 
-	},{"../const":16,"eventemitter3":10}],69:[function(require,module,exports){
+	},{"../const":22,"eventemitter3":10}],76:[function(require,module,exports){
 	var Ticker = require('./Ticker');
 
 	/**
@@ -28535,7 +31530,7 @@
 	    Ticker: Ticker
 	};
 
-	},{"./Ticker":68}],70:[function(require,module,exports){
+	},{"./Ticker":75}],77:[function(require,module,exports){
 	var CONST = require('../const');
 
 	/**
@@ -28812,7 +31807,7 @@
 	    BaseTextureCache: {}
 	};
 
-	},{"../const":16,"./pluginTarget":71,"async":1,"eventemitter3":10}],71:[function(require,module,exports){
+	},{"../const":22,"./pluginTarget":78,"async":1,"eventemitter3":10}],78:[function(require,module,exports){
 	/**
 	 * Mixins functionality to make an object have "plugins".
 	 *
@@ -28882,7 +31877,7 @@
 	    }
 	};
 
-	},{}],72:[function(require,module,exports){
+	},{}],79:[function(require,module,exports){
 	/*global console */
 	var core = require('./core'),
 	    mesh = require('./mesh'),
@@ -29233,7 +32228,7 @@
 	    return core.utils.uid();
 	};
 
-	},{"./core":23,"./extras":79,"./filters":96,"./mesh":121}],73:[function(require,module,exports){
+	},{"./core":29,"./extras":86,"./filters":103,"./mesh":128}],80:[function(require,module,exports){
 	var core = require('../core');
 
 	/**
@@ -29621,7 +32616,7 @@
 
 	BitmapText.fonts = {};
 
-	},{"../core":23}],74:[function(require,module,exports){
+	},{"../core":29}],81:[function(require,module,exports){
 	var core = require('../core');
 
 	/**
@@ -29941,7 +32936,7 @@
 
 	    return new MovieClip(textures);
 	};
-	},{"../core":23}],75:[function(require,module,exports){
+	},{"../core":29}],82:[function(require,module,exports){
 	var core = require('../core'),
 	    // a sprite use dfor rendering textures..
 	    tempPoint = new core.Point(),
@@ -30182,7 +33177,7 @@
 	    if(!this._canvasPattern)
 	    {
 	        // cut an object from a spritesheet..
-	        var tempCanvas = new core.CanvasBuffer(texture._frame.width, texture._frame.height);
+	        var tempCanvas = new core.CanvasBuffer(texture._frame.width * resolution, texture._frame.height * resolution);
 
 	        // Tint the tiling sprite
 	        if (this.tint !== 0xFFFFFF)
@@ -30197,7 +33192,7 @@
 	        }
 	        else
 	        {
-	            tempCanvas.context.drawImage(baseTexture.source, -texture._frame.x, -texture._frame.y);
+	            tempCanvas.context.drawImage(baseTexture.source, -texture._frame.x * resolution, -texture._frame.y * resolution);
 	        }
 	        this._canvasPattern = tempCanvas.context.createPattern( tempCanvas.canvas, 'repeat' );
 	    }
@@ -30212,7 +33207,7 @@
 	                       transform.ty * resolution);
 
 	    // TODO - this should be rolled into the setTransform above..
-	    context.scale(this.tileScale.x,this.tileScale.y);
+	    context.scale(this.tileScale.x / resolution, this.tileScale.y / resolution);
 
 	    context.translate(modX + (this.anchor.x * -this._width ),
 	                      modY + (this.anchor.y * -this._height));
@@ -30228,8 +33223,8 @@
 	    context.fillStyle = this._canvasPattern;
 	    context.fillRect(-modX,
 	                     -modY,
-	                     this._width / this.tileScale.x,
-	                     this._height / this.tileScale.y);
+	                     this._width * resolution / this.tileScale.x,
+	                     this._height * resolution / this.tileScale.y);
 
 
 	    //TODO - pretty sure this can be deleted...
@@ -30393,7 +33388,7 @@
 	    return new TilingSprite(core.Texture.fromImage(imageId, crossorigin, scaleMode),width,height);
 	};
 
-	},{"../core":23,"../core/renderers/canvas/utils/CanvasTinter":41}],76:[function(require,module,exports){
+	},{"../core":29,"../core/renderers/canvas/utils/CanvasTinter":48}],83:[function(require,module,exports){
 	var core = require('../core'),
 	    DisplayObject = core.DisplayObject,
 	    _tempMatrix = new core.Matrix();
@@ -30665,7 +33660,7 @@
 	    this._originalDestroy();
 	};
 
-	},{"../core":23}],77:[function(require,module,exports){
+	},{"../core":29}],84:[function(require,module,exports){
 	var core = require('../core');
 
 	/**
@@ -30695,7 +33690,7 @@
 	    return null;
 	};
 
-	},{"../core":23}],78:[function(require,module,exports){
+	},{"../core":29}],85:[function(require,module,exports){
 	var core = require('../core');
 
 	/**
@@ -30725,7 +33720,7 @@
 	    return point;
 	};
 
-	},{"../core":23}],79:[function(require,module,exports){
+	},{"../core":29}],86:[function(require,module,exports){
 	/**
 	 * @file        Main export of the PIXI extras library
 	 * @author      Mat Groves <mat@goodboydigital.com>
@@ -30746,7 +33741,7 @@
 	    BitmapText:     require('./BitmapText')
 	};
 
-	},{"./BitmapText":73,"./MovieClip":74,"./TilingSprite":75,"./cacheAsBitmap":76,"./getChildByName":77,"./getGlobalPosition":78}],80:[function(require,module,exports){
+	},{"./BitmapText":80,"./MovieClip":81,"./TilingSprite":82,"./cacheAsBitmap":83,"./getChildByName":84,"./getGlobalPosition":85}],87:[function(require,module,exports){
 	var core = require('../../core');
 	// @see https://github.com/substack/brfs/issues/25
 
@@ -30803,7 +33798,7 @@
 	    }
 	});
 
-	},{"../../core":23}],81:[function(require,module,exports){
+	},{"../../core":29}],88:[function(require,module,exports){
 	var core = require('../../core'),
 	    BlurXFilter = require('../blur/BlurXFilter'),
 	    BlurYFilter = require('../blur/BlurYFilter');
@@ -30904,7 +33899,7 @@
 	    }
 	});
 
-	},{"../../core":23,"../blur/BlurXFilter":84,"../blur/BlurYFilter":85}],82:[function(require,module,exports){
+	},{"../../core":29,"../blur/BlurXFilter":91,"../blur/BlurYFilter":92}],89:[function(require,module,exports){
 	var core = require('../../core');
 
 
@@ -31046,7 +34041,7 @@
 	    }
 	});
 
-	},{"../../core":23}],83:[function(require,module,exports){
+	},{"../../core":29}],90:[function(require,module,exports){
 	var core = require('../../core'),
 	    BlurXFilter = require('./BlurXFilter'),
 	    BlurYFilter = require('./BlurYFilter');
@@ -31156,7 +34151,7 @@
 	    }
 	});
 
-	},{"../../core":23,"./BlurXFilter":84,"./BlurYFilter":85}],84:[function(require,module,exports){
+	},{"../../core":29,"./BlurXFilter":91,"./BlurYFilter":92}],91:[function(require,module,exports){
 	var core = require('../../core');
 	// @see https://github.com/substack/brfs/issues/25
 
@@ -31249,7 +34244,7 @@
 	    }
 	});
 
-	},{"../../core":23}],85:[function(require,module,exports){
+	},{"../../core":29}],92:[function(require,module,exports){
 	var core = require('../../core');
 	// @see https://github.com/substack/brfs/issues/25
 
@@ -31335,7 +34330,7 @@
 	    }
 	});
 
-	},{"../../core":23}],86:[function(require,module,exports){
+	},{"../../core":29}],93:[function(require,module,exports){
 	var core = require('../../core');
 	// @see https://github.com/substack/brfs/issues/25
 
@@ -31365,7 +34360,7 @@
 	SmartBlurFilter.prototype.constructor = SmartBlurFilter;
 	module.exports = SmartBlurFilter;
 
-	},{"../../core":23}],87:[function(require,module,exports){
+	},{"../../core":29}],94:[function(require,module,exports){
 	var core = require('../../core');
 	// @see https://github.com/substack/brfs/issues/25
 
@@ -31391,7 +34386,7 @@
 	        // vertex shader
 	        null,
 	        // fragment shader
-	        "precision mediump float;\n\nvarying vec2 vTextureCoord;\nuniform sampler2D uSampler;\nuniform float m[25];\n\nvoid main(void)\n{\n\n    vec4 c = texture2D(uSampler, vTextureCoord);\n\n    gl_FragColor.r = (m[0] * c.r);\n        gl_FragColor.r += (m[1] * c.g);\n        gl_FragColor.r += (m[2] * c.b);\n        gl_FragColor.r += (m[3] * c.a);\n        gl_FragColor.r += m[4];\n\n    gl_FragColor.g = (m[5] * c.r);\n        gl_FragColor.g += (m[6] * c.g);\n        gl_FragColor.g += (m[7] * c.b);\n        gl_FragColor.g += (m[8] * c.a);\n        gl_FragColor.g += m[9];\n\n     gl_FragColor.b = (m[10] * c.r);\n        gl_FragColor.b += (m[11] * c.g);\n        gl_FragColor.b += (m[12] * c.b);\n        gl_FragColor.b += (m[13] * c.a);\n        gl_FragColor.b += m[14];\n\n     gl_FragColor.a = (m[15] * c.r);\n        gl_FragColor.a += (m[16] * c.g);\n        gl_FragColor.a += (m[17] * c.b);\n        gl_FragColor.a += (m[18] * c.a);\n        gl_FragColor.a += m[19];\n\n}\n",
+	        "precision mediump float;\n\nvarying vec2 vTextureCoord;\nuniform sampler2D uSampler;\nuniform float m[25];\n\nvoid main(void)\n{\n\n    vec4 c = texture2D(uSampler, vTextureCoord);\n\n    gl_FragColor.r = (m[0] * c.r);\n        gl_FragColor.r += (m[1] * c.g);\n        gl_FragColor.r += (m[2] * c.b);\n        gl_FragColor.r += (m[3] * c.a);\n        gl_FragColor.r += m[4] * c.a;\n\n    gl_FragColor.g = (m[5] * c.r);\n        gl_FragColor.g += (m[6] * c.g);\n        gl_FragColor.g += (m[7] * c.b);\n        gl_FragColor.g += (m[8] * c.a);\n        gl_FragColor.g += m[9] * c.a;\n\n     gl_FragColor.b = (m[10] * c.r);\n        gl_FragColor.b += (m[11] * c.g);\n        gl_FragColor.b += (m[12] * c.b);\n        gl_FragColor.b += (m[13] * c.a);\n        gl_FragColor.b += m[14] * c.a;\n\n     gl_FragColor.a = (m[15] * c.r);\n        gl_FragColor.a += (m[16] * c.g);\n        gl_FragColor.a += (m[17] * c.b);\n        gl_FragColor.a += (m[18] * c.a);\n        gl_FragColor.a += m[19] * c.a;\n\n}\n",
 	        // custom uniforms
 	        {
 	            m: {
@@ -31901,7 +34896,7 @@
 	    }
 	});
 
-	},{"../../core":23}],88:[function(require,module,exports){
+	},{"../../core":29}],95:[function(require,module,exports){
 	var core = require('../../core');
 	// @see https://github.com/substack/brfs/issues/25
 
@@ -31950,7 +34945,7 @@
 	    }
 	});
 
-	},{"../../core":23}],89:[function(require,module,exports){
+	},{"../../core":29}],96:[function(require,module,exports){
 	var core = require('../../core');
 	// @see https://github.com/substack/brfs/issues/25
 
@@ -32041,7 +35036,7 @@
 	    }
 	});
 
-	},{"../../core":23}],90:[function(require,module,exports){
+	},{"../../core":29}],97:[function(require,module,exports){
 	var core = require('../../core');
 	// @see https://github.com/substack/brfs/issues/25
 
@@ -32067,7 +35062,7 @@
 	CrossHatchFilter.prototype.constructor = CrossHatchFilter;
 	module.exports = CrossHatchFilter;
 
-	},{"../../core":23}],91:[function(require,module,exports){
+	},{"../../core":29}],98:[function(require,module,exports){
 	var core = require('../../core');
 	// @see https://github.com/substack/brfs/issues/25
 
@@ -32151,7 +35146,7 @@
 	    }
 	});
 
-	},{"../../core":23}],92:[function(require,module,exports){
+	},{"../../core":29}],99:[function(require,module,exports){
 	var core = require('../../core');
 	// @see https://github.com/substack/brfs/issues/25
 
@@ -32223,7 +35218,7 @@
 	    }
 	});
 
-	},{"../../core":23}],93:[function(require,module,exports){
+	},{"../../core":29}],100:[function(require,module,exports){
 	var core = require('../../core');
 
 	// @see https://github.com/substack/brfs/issues/25
@@ -32314,7 +35309,7 @@
 	    }
 	});
 
-	},{"../../core":23}],94:[function(require,module,exports){
+	},{"../../core":29}],101:[function(require,module,exports){
 	var core = require('../../core'),
 	    BlurXFilter = require('../blur/BlurXFilter'),
 	    BlurYTintFilter = require('./BlurYTintFilter');
@@ -32507,7 +35502,7 @@
 	    }
 	});
 
-	},{"../../core":23,"../blur/BlurXFilter":84,"./BlurYTintFilter":93}],95:[function(require,module,exports){
+	},{"../../core":29,"../blur/BlurXFilter":91,"./BlurYTintFilter":100}],102:[function(require,module,exports){
 	var core = require('../../core');
 	// @see https://github.com/substack/brfs/issues/25
 
@@ -32556,7 +35551,7 @@
 	    }
 	});
 
-	},{"../../core":23}],96:[function(require,module,exports){
+	},{"../../core":29}],103:[function(require,module,exports){
 	/**
 	 * @file        Main export of the PIXI filters library
 	 * @author      Mat Groves <mat@goodboydigital.com>
@@ -32595,7 +35590,7 @@
 	    TwistFilter:        require('./twist/TwistFilter')
 	};
 
-	},{"./ascii/AsciiFilter":80,"./bloom/BloomFilter":81,"./blur/BlurDirFilter":82,"./blur/BlurFilter":83,"./blur/BlurXFilter":84,"./blur/BlurYFilter":85,"./blur/SmartBlurFilter":86,"./color/ColorMatrixFilter":87,"./color/ColorStepFilter":88,"./convolution/ConvolutionFilter":89,"./crosshatch/CrossHatchFilter":90,"./displacement/DisplacementFilter":91,"./dot/DotScreenFilter":92,"./dropshadow/DropShadowFilter":94,"./gray/GrayFilter":95,"./invert/InvertFilter":97,"./noise/NoiseFilter":98,"./pixelate/PixelateFilter":99,"./rgb/RGBSplitFilter":100,"./sepia/SepiaFilter":101,"./shockwave/ShockwaveFilter":102,"./tiltshift/TiltShiftFilter":104,"./tiltshift/TiltShiftXFilter":105,"./tiltshift/TiltShiftYFilter":106,"./twist/TwistFilter":107}],97:[function(require,module,exports){
+	},{"./ascii/AsciiFilter":87,"./bloom/BloomFilter":88,"./blur/BlurDirFilter":89,"./blur/BlurFilter":90,"./blur/BlurXFilter":91,"./blur/BlurYFilter":92,"./blur/SmartBlurFilter":93,"./color/ColorMatrixFilter":94,"./color/ColorStepFilter":95,"./convolution/ConvolutionFilter":96,"./crosshatch/CrossHatchFilter":97,"./displacement/DisplacementFilter":98,"./dot/DotScreenFilter":99,"./dropshadow/DropShadowFilter":101,"./gray/GrayFilter":102,"./invert/InvertFilter":104,"./noise/NoiseFilter":105,"./pixelate/PixelateFilter":106,"./rgb/RGBSplitFilter":107,"./sepia/SepiaFilter":108,"./shockwave/ShockwaveFilter":109,"./tiltshift/TiltShiftFilter":111,"./tiltshift/TiltShiftXFilter":112,"./tiltshift/TiltShiftYFilter":113,"./twist/TwistFilter":114}],104:[function(require,module,exports){
 	var core = require('../../core');
 	// @see https://github.com/substack/brfs/issues/25
 
@@ -32645,7 +35640,7 @@
 	    }
 	});
 
-	},{"../../core":23}],98:[function(require,module,exports){
+	},{"../../core":29}],105:[function(require,module,exports){
 	var core = require('../../core');
 	// @see https://github.com/substack/brfs/issues/25
 
@@ -32700,7 +35695,7 @@
 	    }
 	});
 
-	},{"../../core":23}],99:[function(require,module,exports){
+	},{"../../core":29}],106:[function(require,module,exports){
 	var core = require('../../core');
 	// @see https://github.com/substack/brfs/issues/25
 
@@ -32751,7 +35746,7 @@
 	    }
 	});
 
-	},{"../../core":23}],100:[function(require,module,exports){
+	},{"../../core":29}],107:[function(require,module,exports){
 	var core = require('../../core');
 	// @see https://github.com/substack/brfs/issues/25
 
@@ -32837,7 +35832,7 @@
 	    }
 	});
 
-	},{"../../core":23}],101:[function(require,module,exports){
+	},{"../../core":29}],108:[function(require,module,exports){
 	var core = require('../../core');
 	// @see https://github.com/substack/brfs/issues/25
 
@@ -32887,7 +35882,7 @@
 	    }
 	});
 
-	},{"../../core":23}],102:[function(require,module,exports){
+	},{"../../core":29}],109:[function(require,module,exports){
 	var core = require('../../core');
 	// @see https://github.com/substack/brfs/issues/25
 
@@ -32975,7 +35970,7 @@
 	    }
 	});
 
-	},{"../../core":23}],103:[function(require,module,exports){
+	},{"../../core":29}],110:[function(require,module,exports){
 	var core = require('../../core');
 	// @see https://github.com/substack/brfs/issues/25
 
@@ -33100,7 +36095,7 @@
 	    }
 	});
 
-	},{"../../core":23}],104:[function(require,module,exports){
+	},{"../../core":29}],111:[function(require,module,exports){
 	var core = require('../../core'),
 	    TiltShiftXFilter = require('./TiltShiftXFilter'),
 	    TiltShiftYFilter = require('./TiltShiftYFilter');
@@ -33210,7 +36205,7 @@
 	    }
 	});
 
-	},{"../../core":23,"./TiltShiftXFilter":105,"./TiltShiftYFilter":106}],105:[function(require,module,exports){
+	},{"../../core":29,"./TiltShiftXFilter":112,"./TiltShiftYFilter":113}],112:[function(require,module,exports){
 	var TiltShiftAxisFilter = require('./TiltShiftAxisFilter');
 
 	/**
@@ -33248,7 +36243,7 @@
 	    this.uniforms.delta.value.y = dy / d;
 	};
 
-	},{"./TiltShiftAxisFilter":103}],106:[function(require,module,exports){
+	},{"./TiltShiftAxisFilter":110}],113:[function(require,module,exports){
 	var TiltShiftAxisFilter = require('./TiltShiftAxisFilter');
 
 	/**
@@ -33286,7 +36281,7 @@
 	    this.uniforms.delta.value.y = dx / d;
 	};
 
-	},{"./TiltShiftAxisFilter":103}],107:[function(require,module,exports){
+	},{"./TiltShiftAxisFilter":110}],114:[function(require,module,exports){
 	var core = require('../../core');
 	// @see https://github.com/substack/brfs/issues/25
 
@@ -33371,7 +36366,7 @@
 	    }
 	});
 
-	},{"../../core":23}],108:[function(require,module,exports){
+	},{"../../core":29}],115:[function(require,module,exports){
 	(function (global){
 	// run the polyfills
 	require('./polyfill');
@@ -33403,8 +36398,7 @@
 	global.PIXI = core;
 
 	}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-
-	},{"./accessibility":15,"./core":23,"./deprecation":72,"./extras":79,"./filters":96,"./interaction":111,"./loaders":114,"./mesh":121,"./polyfill":126}],109:[function(require,module,exports){
+	},{"./accessibility":21,"./core":29,"./deprecation":79,"./extras":86,"./filters":103,"./interaction":118,"./loaders":121,"./mesh":128,"./polyfill":133}],116:[function(require,module,exports){
 	var core = require('../core');
 
 	/**
@@ -33453,7 +36447,7 @@
 	    return displayObject.worldTransform.applyInverse(globalPos || this.global, point);
 	};
 
-	},{"../core":23}],110:[function(require,module,exports){
+	},{"../core":29}],117:[function(require,module,exports){
 	var core = require('../core'),
 	    InteractionData = require('./InteractionData');
 
@@ -33540,6 +36534,16 @@
 	    this.interactionDOMElement = null;
 
 	    /**
+	     * This property determins if mousemove and touchmove events are fired only when the cursror is over the object
+	     * Setting to true will make things work more in line with how the DOM verison works.
+	     * Setting to false can make things easier for things like dragging
+	     * It is currently set to false as this is how pixi used to work. This will be set to true in future versions of pixi.
+	     * @member {boolean}
+	     * @private
+	     */
+	    this.moveWhenInside = false;
+	    
+	    /**
 	     * Have events been attached to the dom element?
 	     *
 	     * @member {boolean}
@@ -33610,6 +36614,7 @@
 	     * @private
 	     */
 	    this._tempPoint = new core.Point();
+	    
 
 	    /**
 	     * The current resolution
@@ -33838,9 +36843,18 @@
 	        
 	        for (var i = children.length-1; i >= 0; i--)
 	        {
+	            var child = children[i];
+
 	            // time to get recursive.. if this function will return if somthing is hit..
-	            if( this.processInteractive(point, children[i], func, hitTest, interactiveParent) )
+	            if(this.processInteractive(point, child, func, hitTest, interactiveParent))
 	            {
+	                // its a good idea to check if a child has lost its parent.
+	                // this means it has been removed whilst looping so its best
+	                if(!child.parent)
+	                {
+	                    continue;
+	                }
+
 	                hit = true;
 
 	                // we no longer need to hit test any more objects in this container as we we now know the parent has been hit
@@ -33848,10 +36862,13 @@
 	                
 	                // If the child is interactive , that means that the object hit was actually interactive and not just the child of an interactive object. 
 	                // This means we no longer need to hit test anything else. We still need to run through all objects, but we don't need to perform any hit tests.
-	                if(children[i].interactive)
-	                {
-	                    hitTest = false;
-	                }
+	                //if(child.interactive)
+	                //{
+	                hitTest = false;
+	                //}
+
+	                // we can break now as we have hit an object.
+	                //break;
 	            }
 	        }
 	    }
@@ -34021,8 +37038,13 @@
 	 */
 	InteractionManager.prototype.processMouseMove = function ( displayObject, hit )
 	{
-	    this.dispatchEvent( displayObject, 'mousemove', this.eventData);
 	    this.processMouseOverOut(displayObject, hit);
+	    
+	    // only display on mouse over
+	    if(!this.moveWhenInside || hit)
+	    {
+	        this.dispatchEvent( displayObject, 'mousemove', this.eventData);
+	    }
 	};
 
 
@@ -34221,7 +37243,7 @@
 	        this.eventData.data = touchData;
 	        this.eventData.stopped = false;
 
-	        this.processInteractive( touchData.global, this.renderer._lastObjectRendered, this.processTouchMove, true );
+	        this.processInteractive( touchData.global, this.renderer._lastObjectRendered, this.processTouchMove, this.moveWhenInside );
 
 	        this.returnTouchData( touchData );
 	    }
@@ -34236,8 +37258,10 @@
 	 */
 	InteractionManager.prototype.processTouchMove = function ( displayObject, hit )
 	{
-	    hit = hit;
-	    this.dispatchEvent( displayObject, 'touchmove', this.eventData);
+	    if(!this.moveWhenInside || hit)
+	    {
+	        this.dispatchEvent( displayObject, 'touchmove', this.eventData);
+	    }
 	};
 
 	/**
@@ -34329,7 +37353,7 @@
 	core.WebGLRenderer.registerPlugin('interaction', InteractionManager);
 	core.CanvasRenderer.registerPlugin('interaction', InteractionManager);
 
-	},{"../core":23,"./InteractionData":109,"./interactiveTarget":112}],111:[function(require,module,exports){
+	},{"../core":29,"./InteractionData":116,"./interactiveTarget":119}],118:[function(require,module,exports){
 	/**
 	 * @file        Main export of the PIXI interactions library
 	 * @author      Mat Groves <mat@goodboydigital.com>
@@ -34346,7 +37370,7 @@
 	    interactiveTarget:  require('./interactiveTarget')
 	};
 
-	},{"./InteractionData":109,"./InteractionManager":110,"./interactiveTarget":112}],112:[function(require,module,exports){
+	},{"./InteractionData":116,"./InteractionManager":117,"./interactiveTarget":119}],119:[function(require,module,exports){
 	/**
 	 * Default property values of interactive objects
 	 * used by {@link PIXI.interaction.InteractionManager}.
@@ -34395,7 +37419,7 @@
 
 	module.exports = interactiveTarget;
 
-	},{}],113:[function(require,module,exports){
+	},{}],120:[function(require,module,exports){
 	var Resource = require('resource-loader').Resource,
 	    core = require('../core'),
 	    extras = require('../extras'),
@@ -34444,7 +37468,10 @@
 	        var second = parseInt(kernings[i].getAttribute('second'), 10);
 	        var amount = parseInt(kernings[i].getAttribute('amount'), 10);
 
-	        data.chars[second].kerning[first] = amount;
+	        if(data.chars[second])
+	        {
+	            data.chars[second].kerning[first] = amount;
+	        }
 	    }
 
 	    resource.bitmapFont = data;
@@ -34516,7 +37543,7 @@
 	    };
 	};
 
-	},{"../core":23,"../extras":79,"path":2,"resource-loader":133}],114:[function(require,module,exports){
+	},{"../core":29,"../extras":86,"path":2,"resource-loader":16}],121:[function(require,module,exports){
 	/**
 	 * @file        Main export of the PIXI loaders library
 	 * @author      Mat Groves <mat@goodboydigital.com>
@@ -34537,7 +37564,7 @@
 	    Resource:           require('resource-loader').Resource
 	};
 
-	},{"./bitmapFontParser":113,"./loader":115,"./spritesheetParser":116,"./textureParser":117,"resource-loader":133}],115:[function(require,module,exports){
+	},{"./bitmapFontParser":120,"./loader":122,"./spritesheetParser":123,"./textureParser":124,"resource-loader":16}],122:[function(require,module,exports){
 	var ResourceLoader = require('resource-loader'),
 	    textureParser = require('./textureParser'),
 	    spritesheetParser = require('./spritesheetParser'),
@@ -34599,17 +37626,22 @@
 
 	Resource.setExtensionXhrType('fnt', Resource.XHR_RESPONSE_TYPE.DOCUMENT);
 
-	},{"./bitmapFontParser":113,"./spritesheetParser":116,"./textureParser":117,"resource-loader":133}],116:[function(require,module,exports){
+	},{"./bitmapFontParser":120,"./spritesheetParser":123,"./textureParser":124,"resource-loader":16}],123:[function(require,module,exports){
 	var Resource = require('resource-loader').Resource,
 	    path = require('path'),
-	    core = require('../core');
+	    core = require('../core'),
+	    async = require('async');
+
+	var BATCH_SIZE = 1000;
 
 	module.exports = function ()
 	{
 	    return function (resource, next)
 	    {
-	        // skip if no data, its not json, or it isn't spritesheet data
-	        if (!resource.data || !resource.isJson || !resource.data.frames)
+	        var imageResourceName = resource.name + '_image';
+
+	        // skip if no data, its not json, it isn't spritesheet data, or the image resource already exists
+	        if (!resource.data || !resource.isJson || !resource.data.frames || this.resources[imageResourceName])
 	        {
 	            return next();
 	        }
@@ -34622,68 +37654,98 @@
 
 	        var route = path.dirname(resource.url.replace(this.baseUrl, ''));
 
-	        var resolution = core.utils.getResolutionOfUrl( resource.url );
-
 	        // load the image for this sheet
-	        this.add(resource.name + '_image', route + '/' + resource.data.meta.image, loadOptions, function (res)
+	        this.add(imageResourceName, route + '/' + resource.data.meta.image, loadOptions, function (res)
 	        {
 	            resource.textures = {};
 
 	            var frames = resource.data.frames;
+	            var frameKeys = Object.keys(frames);
+	            var resolution = core.utils.getResolutionOfUrl(resource.url);
+	            var batchIndex = 0;
 
-	            for (var i in frames)
+	            function processFrames(initialFrameIndex, maxFrames)
 	            {
-	                var rect = frames[i].frame;
+	                var frameIndex = initialFrameIndex;
 
-	                if (rect)
+	                while (frameIndex - initialFrameIndex < maxFrames && frameIndex < frameKeys.length)
 	                {
-	                    var size = null;
-	                    var trim = null;
+	                    var frame = frames[frameKeys[frameIndex]];
+	                    var rect = frame.frame;
 
-	                    if (frames[i].rotated) {
-	                        size = new core.Rectangle(rect.x, rect.y, rect.h, rect.w);
-	                    }
-	                    else {
-	                        size = new core.Rectangle(rect.x, rect.y, rect.w, rect.h);
-	                    }
-
-	                    //  Check to see if the sprite is trimmed
-	                    if (frames[i].trimmed)
+	                    if (rect)
 	                    {
-	                        trim = new core.Rectangle(
-	                            frames[i].spriteSourceSize.x / resolution,
-	                            frames[i].spriteSourceSize.y / resolution,
-	                            frames[i].sourceSize.w / resolution,
-	                            frames[i].sourceSize.h / resolution
-	                         );
+	                        var size = null;
+	                        var trim = null;
+
+	                        if (frame.rotated)
+	                        {
+	                            size = new core.Rectangle(rect.x, rect.y, rect.h, rect.w);
+	                        }
+	                        else
+	                        {
+	                            size = new core.Rectangle(rect.x, rect.y, rect.w, rect.h);
+	                        }
+
+	                        //  Check to see if the sprite is trimmed
+	                        if (frame.trimmed)
+	                        {
+	                            trim = new core.Rectangle(
+	                                frame.spriteSourceSize.x / resolution,
+	                                frame.spriteSourceSize.y / resolution,
+	                                frame.sourceSize.w / resolution,
+	                                frame.sourceSize.h / resolution
+	                            );
+	                        }
+
+	                        // flip the width and height!
+	                        if (frame.rotated)
+	                        {
+	                            var temp = size.width;
+	                            size.width = size.height;
+	                            size.height = temp;
+	                        }
+
+	                        size.x /= resolution;
+	                        size.y /= resolution;
+	                        size.width /= resolution;
+	                        size.height /= resolution;
+
+	                        resource.textures[frameKeys[frameIndex]] = new core.Texture(res.texture.baseTexture, size, size.clone(), trim, frame.rotated);
+
+	                        // lets also add the frame to pixi's global cache for fromFrame and fromImage functions
+	                        core.utils.TextureCache[frameKeys[frameIndex]] = resource.textures[frameKeys[frameIndex]];
 	                    }
-
-	                    // flip the width and height!
-	                    if (frames[i].rotated)
-	                    {
-	                        var temp = size.width;
-	                        size.width = size.height;
-	                        size.height = temp;
-	                    }
-
-	                    size.x /= resolution;
-	                    size.y /= resolution;
-	                    size.width /= resolution;
-	                    size.height /= resolution;
-
-	                    resource.textures[i] = new core.Texture(res.texture.baseTexture, size, size.clone(), trim, frames[i].rotated);
-
-	                    // lets also add the frame to pixi's global cache for fromFrame and fromImage functions
-	                    core.utils.TextureCache[i] = resource.textures[i];
+	                    frameIndex++;
 	                }
 	            }
 
-	            next();
+	            function shouldProcessNextBatch()
+	            {
+	                return batchIndex * BATCH_SIZE < frameKeys.length;
+	            }
+
+	            function processNextBatch(done)
+	            {
+	                processFrames(batchIndex * BATCH_SIZE, BATCH_SIZE);
+	                batchIndex++;
+	                setTimeout(done, 0);
+	            }
+
+	            if (frameKeys.length <= BATCH_SIZE)
+	            {
+	                processFrames(0, BATCH_SIZE);
+	                next();
+	            }
+	            else
+	            {
+	                async.whilst(shouldProcessNextBatch, processNextBatch, next);
+	            }
 	        });
 	    };
 	};
 
-	},{"../core":23,"path":2,"resource-loader":133}],117:[function(require,module,exports){
+	},{"../core":29,"async":1,"path":2,"resource-loader":16}],124:[function(require,module,exports){
 	var core = require('../core');
 
 	module.exports = function ()
@@ -34705,7 +37767,7 @@
 	    };
 	};
 
-	},{"../core":23}],118:[function(require,module,exports){
+	},{"../core":29}],125:[function(require,module,exports){
 	var core = require('../core'),
 	    tempPoint = new core.Point(),
 	    tempPolygon = new core.Polygon();
@@ -34716,7 +37778,7 @@
 	 * @extends PIXI.Container
 	 * @memberof PIXI.mesh
 	 * @param texture {PIXI.Texture} The texture to use
-	 * @param [vertices] {Float32Arrif you want to specify the vertices
+	 * @param [vertices] {Float32Array} if you want to specify the vertices
 	 * @param [uvs] {Float32Array} if you want to specify the uvs
 	 * @param [indices] {Uint16Array} if you want to specify the indices
 	 * @param [drawMode] {number} the drawMode, can be any of the Mesh.DRAW_MODES consts
@@ -34866,14 +37928,15 @@
 	    var context = renderer.context;
 
 	    var transform = this.worldTransform;
+	    var res = renderer.resolution;
 
 	    if (renderer.roundPixels)
 	    {
-	        context.setTransform(transform.a, transform.b, transform.c, transform.d, transform.tx | 0, transform.ty | 0);
+	        context.setTransform(transform.a * res, transform.b * res, transform.c * res, transform.d * res, (transform.tx * res) | 0, (transform.ty * res) | 0);
 	    }
 	    else
 	    {
-	        context.setTransform(transform.a, transform.b, transform.c, transform.d, transform.tx, transform.ty);
+	        context.setTransform(transform.a * res, transform.b * res, transform.c * res, transform.d * res, transform.tx * res, transform.ty * res);
 	    }
 
 	    if (this.drawMode === Mesh.DRAW_MODES.TRIANGLE_MESH)
@@ -34946,15 +38009,16 @@
 	 */
 	Mesh.prototype._renderCanvasDrawTriangle = function (context, vertices, uvs, index0, index1, index2)
 	{
-	    var textureSource = this._texture.baseTexture.source;
-	    var textureWidth = this._texture.baseTexture.width;
-	    var textureHeight = this._texture.baseTexture.height;
+	    var base = this._texture.baseTexture;
+	    var textureSource = base.source;
+	    var textureWidth = base.width;
+	    var textureHeight = base.height;
 
 	    var x0 = vertices[index0], x1 = vertices[index1], x2 = vertices[index2];
 	    var y0 = vertices[index0 + 1], y1 = vertices[index1 + 1], y2 = vertices[index2 + 1];
 
-	    var u0 = uvs[index0] * textureWidth, u1 = uvs[index1] * textureWidth, u2 = uvs[index2] * textureWidth;
-	    var v0 = uvs[index0 + 1] * textureHeight, v1 = uvs[index1 + 1] * textureHeight, v2 = uvs[index2 + 1] * textureHeight;
+	    var u0 = uvs[index0] * base.width, u1 = uvs[index1] * base.width, u2 = uvs[index2] * base.width;
+	    var v0 = uvs[index0 + 1] * base.height, v1 = uvs[index1 + 1] * base.height, v2 = uvs[index2 + 1] * base.height;
 
 	    if (this.canvasPadding > 0)
 	    {
@@ -35012,7 +38076,7 @@
 	        deltaB / delta, deltaE / delta,
 	        deltaC / delta, deltaF / delta);
 
-	    context.drawImage(textureSource, 0, 0);
+	    context.drawImage(textureSource, 0, 0, textureWidth * base.resolution, textureHeight * base.resolution, 0, 0, textureWidth, textureHeight);
 	    context.restore();
 	};
 
@@ -35181,7 +38245,7 @@
 	    TRIANGLES: 1
 	};
 
-	},{"../core":23}],119:[function(require,module,exports){
+	},{"../core":29}],126:[function(require,module,exports){
 	var Mesh = require('./Mesh');
 
 	/**
@@ -35249,7 +38313,6 @@
 	    var segmentsYSub = this.segmentsY - 1;
 	    var i = 0;
 
-	    // TODO MAP UVS..
 	    var sizeX = texture.width / segmentsXSub;
 	    var sizeY = texture.height / segmentsYSub;
 
@@ -35262,8 +38325,9 @@
 	        verts.push((x * sizeX),
 	                   (y * sizeY));
 
-	        uvs.push(x / (this.segmentsX-1), y/ (this.segmentsY-1));
-	    }
+	        // this works for rectangular textures. 
+	        uvs.push(texture._uvs.x0 + (texture._uvs.x1 - texture._uvs.x0) * (x / (this.segmentsX-1)), texture._uvs.y0 + (texture._uvs.y3-texture._uvs.y0) * (y/ (this.segmentsY-1)));
+	      }
 
 	    //  cons
 
@@ -35307,7 +38371,7 @@
 	    }
 	};
 
-	},{"./Mesh":118}],120:[function(require,module,exports){
+	},{"./Mesh":125}],127:[function(require,module,exports){
 	var Mesh = require('./Mesh');
 	var core = require('../core');
 
@@ -35520,7 +38584,7 @@
 	    this.containerUpdateTransform();
 	};
 
-	},{"../core":23,"./Mesh":118}],121:[function(require,module,exports){
+	},{"../core":29,"./Mesh":125}],128:[function(require,module,exports){
 	/**
 	 * @file        Main export of the PIXI extras library
 	 * @author      Mat Groves <mat@goodboydigital.com>
@@ -35539,7 +38603,7 @@
 	    MeshShader:     require('./webgl/MeshShader')
 	};
 
-	},{"./Mesh":118,"./Plane":119,"./Rope":120,"./webgl/MeshRenderer":122,"./webgl/MeshShader":123}],122:[function(require,module,exports){
+	},{"./Mesh":125,"./Plane":126,"./Rope":127,"./webgl/MeshRenderer":129,"./webgl/MeshShader":130}],129:[function(require,module,exports){
 	var core = require('../../core'),
 	    Mesh = require('../Mesh');
 
@@ -35768,7 +38832,7 @@
 	    core.ObjectRenderer.prototype.destroy.call(this);
 	};
 
-	},{"../../core":23,"../Mesh":118}],123:[function(require,module,exports){
+	},{"../../core":29,"../Mesh":125}],130:[function(require,module,exports){
 	var core = require('../../core');
 
 	/**
@@ -35829,7 +38893,7 @@
 
 	core.ShaderManager.registerPlugin('meshShader', MeshShader);
 
-	},{"../../core":23}],124:[function(require,module,exports){
+	},{"../../core":29}],131:[function(require,module,exports){
 	// References:
 	// https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Math/sign
 
@@ -35845,7 +38909,7 @@
 	    };
 	}
 
-	},{}],125:[function(require,module,exports){
+	},{}],132:[function(require,module,exports){
 	// References:
 	// https://github.com/sindresorhus/object-assign
 	// https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/assign
@@ -35855,12 +38919,12 @@
 	    Object.assign = require('object-assign');
 	}
 
-	},{"object-assign":11}],126:[function(require,module,exports){
+	},{"object-assign":11}],133:[function(require,module,exports){
 	require('./Object.assign');
 	require('./requestAnimationFrame');
 	require('./Math.sign');
 
-	},{"./Math.sign":124,"./Object.assign":125,"./requestAnimationFrame":127}],127:[function(require,module,exports){
+	},{"./Math.sign":131,"./Object.assign":132,"./requestAnimationFrame":134}],134:[function(require,module,exports){
 	(function (global){
 	// References:
 	// http://paulirish.com/2011/requestanimationframe-for-smart-animating/
@@ -35930,2824 +38994,10 @@
 	}
 
 	}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-
-	},{}],128:[function(require,module,exports){
-	(function (process){
-	/*!
-	 * async
-	 * https://github.com/caolan/async
-	 *
-	 * Copyright 2010-2014 Caolan McMahon
-	 * Released under the MIT license
-	 */
-	/*jshint onevar: false, indent:4 */
-	/*global setImmediate: false, setTimeout: false, console: false */
-	(function () {
-
-	    var async = {};
-
-	    // global on the server, window in the browser
-	    var root, previous_async;
-
-	    root = this;
-	    if (root != null) {
-	      previous_async = root.async;
-	    }
-
-	    async.noConflict = function () {
-	        root.async = previous_async;
-	        return async;
-	    };
-
-	    function only_once(fn) {
-	        var called = false;
-	        return function() {
-	            if (called) throw new Error("Callback was already called.");
-	            called = true;
-	            fn.apply(root, arguments);
-	        }
-	    }
-
-	    //// cross-browser compatiblity functions ////
-
-	    var _toString = Object.prototype.toString;
-
-	    var _isArray = Array.isArray || function (obj) {
-	        return _toString.call(obj) === '[object Array]';
-	    };
-
-	    var _each = function (arr, iterator) {
-	        if (arr.forEach) {
-	            return arr.forEach(iterator);
-	        }
-	        for (var i = 0; i < arr.length; i += 1) {
-	            iterator(arr[i], i, arr);
-	        }
-	    };
-
-	    var _map = function (arr, iterator) {
-	        if (arr.map) {
-	            return arr.map(iterator);
-	        }
-	        var results = [];
-	        _each(arr, function (x, i, a) {
-	            results.push(iterator(x, i, a));
-	        });
-	        return results;
-	    };
-
-	    var _reduce = function (arr, iterator, memo) {
-	        if (arr.reduce) {
-	            return arr.reduce(iterator, memo);
-	        }
-	        _each(arr, function (x, i, a) {
-	            memo = iterator(memo, x, i, a);
-	        });
-	        return memo;
-	    };
-
-	    var _keys = function (obj) {
-	        if (Object.keys) {
-	            return Object.keys(obj);
-	        }
-	        var keys = [];
-	        for (var k in obj) {
-	            if (obj.hasOwnProperty(k)) {
-	                keys.push(k);
-	            }
-	        }
-	        return keys;
-	    };
-
-	    //// exported async module functions ////
-
-	    //// nextTick implementation with browser-compatible fallback ////
-	    if (typeof process === 'undefined' || !(process.nextTick)) {
-	        if (typeof setImmediate === 'function') {
-	            async.nextTick = function (fn) {
-	                // not a direct alias for IE10 compatibility
-	                setImmediate(fn);
-	            };
-	            async.setImmediate = async.nextTick;
-	        }
-	        else {
-	            async.nextTick = function (fn) {
-	                setTimeout(fn, 0);
-	            };
-	            async.setImmediate = async.nextTick;
-	        }
-	    }
-	    else {
-	        async.nextTick = process.nextTick;
-	        if (typeof setImmediate !== 'undefined') {
-	            async.setImmediate = function (fn) {
-	              // not a direct alias for IE10 compatibility
-	              setImmediate(fn);
-	            };
-	        }
-	        else {
-	            async.setImmediate = async.nextTick;
-	        }
-	    }
-
-	    async.each = function (arr, iterator, callback) {
-	        callback = callback || function () {};
-	        if (!arr.length) {
-	            return callback();
-	        }
-	        var completed = 0;
-	        _each(arr, function (x) {
-	            iterator(x, only_once(done) );
-	        });
-	        function done(err) {
-	          if (err) {
-	              callback(err);
-	              callback = function () {};
-	          }
-	          else {
-	              completed += 1;
-	              if (completed >= arr.length) {
-	                  callback();
-	              }
-	          }
-	        }
-	    };
-	    async.forEach = async.each;
-
-	    async.eachSeries = function (arr, iterator, callback) {
-	        callback = callback || function () {};
-	        if (!arr.length) {
-	            return callback();
-	        }
-	        var completed = 0;
-	        var iterate = function () {
-	            iterator(arr[completed], function (err) {
-	                if (err) {
-	                    callback(err);
-	                    callback = function () {};
-	                }
-	                else {
-	                    completed += 1;
-	                    if (completed >= arr.length) {
-	                        callback();
-	                    }
-	                    else {
-	                        iterate();
-	                    }
-	                }
-	            });
-	        };
-	        iterate();
-	    };
-	    async.forEachSeries = async.eachSeries;
-
-	    async.eachLimit = function (arr, limit, iterator, callback) {
-	        var fn = _eachLimit(limit);
-	        fn.apply(null, [arr, iterator, callback]);
-	    };
-	    async.forEachLimit = async.eachLimit;
-
-	    var _eachLimit = function (limit) {
-
-	        return function (arr, iterator, callback) {
-	            callback = callback || function () {};
-	            if (!arr.length || limit <= 0) {
-	                return callback();
-	            }
-	            var completed = 0;
-	            var started = 0;
-	            var running = 0;
-
-	            (function replenish () {
-	                if (completed >= arr.length) {
-	                    return callback();
-	                }
-
-	                while (running < limit && started < arr.length) {
-	                    started += 1;
-	                    running += 1;
-	                    iterator(arr[started - 1], function (err) {
-	                        if (err) {
-	                            callback(err);
-	                            callback = function () {};
-	                        }
-	                        else {
-	                            completed += 1;
-	                            running -= 1;
-	                            if (completed >= arr.length) {
-	                                callback();
-	                            }
-	                            else {
-	                                replenish();
-	                            }
-	                        }
-	                    });
-	                }
-	            })();
-	        };
-	    };
-
-
-	    var doParallel = function (fn) {
-	        return function () {
-	            var args = Array.prototype.slice.call(arguments);
-	            return fn.apply(null, [async.each].concat(args));
-	        };
-	    };
-	    var doParallelLimit = function(limit, fn) {
-	        return function () {
-	            var args = Array.prototype.slice.call(arguments);
-	            return fn.apply(null, [_eachLimit(limit)].concat(args));
-	        };
-	    };
-	    var doSeries = function (fn) {
-	        return function () {
-	            var args = Array.prototype.slice.call(arguments);
-	            return fn.apply(null, [async.eachSeries].concat(args));
-	        };
-	    };
-
-
-	    var _asyncMap = function (eachfn, arr, iterator, callback) {
-	        arr = _map(arr, function (x, i) {
-	            return {index: i, value: x};
-	        });
-	        if (!callback) {
-	            eachfn(arr, function (x, callback) {
-	                iterator(x.value, function (err) {
-	                    callback(err);
-	                });
-	            });
-	        } else {
-	            var results = [];
-	            eachfn(arr, function (x, callback) {
-	                iterator(x.value, function (err, v) {
-	                    results[x.index] = v;
-	                    callback(err);
-	                });
-	            }, function (err) {
-	                callback(err, results);
-	            });
-	        }
-	    };
-	    async.map = doParallel(_asyncMap);
-	    async.mapSeries = doSeries(_asyncMap);
-	    async.mapLimit = function (arr, limit, iterator, callback) {
-	        return _mapLimit(limit)(arr, iterator, callback);
-	    };
-
-	    var _mapLimit = function(limit) {
-	        return doParallelLimit(limit, _asyncMap);
-	    };
-
-	    // reduce only has a series version, as doing reduce in parallel won't
-	    // work in many situations.
-	    async.reduce = function (arr, memo, iterator, callback) {
-	        async.eachSeries(arr, function (x, callback) {
-	            iterator(memo, x, function (err, v) {
-	                memo = v;
-	                callback(err);
-	            });
-	        }, function (err) {
-	            callback(err, memo);
-	        });
-	    };
-	    // inject alias
-	    async.inject = async.reduce;
-	    // foldl alias
-	    async.foldl = async.reduce;
-
-	    async.reduceRight = function (arr, memo, iterator, callback) {
-	        var reversed = _map(arr, function (x) {
-	            return x;
-	        }).reverse();
-	        async.reduce(reversed, memo, iterator, callback);
-	    };
-	    // foldr alias
-	    async.foldr = async.reduceRight;
-
-	    var _filter = function (eachfn, arr, iterator, callback) {
-	        var results = [];
-	        arr = _map(arr, function (x, i) {
-	            return {index: i, value: x};
-	        });
-	        eachfn(arr, function (x, callback) {
-	            iterator(x.value, function (v) {
-	                if (v) {
-	                    results.push(x);
-	                }
-	                callback();
-	            });
-	        }, function (err) {
-	            callback(_map(results.sort(function (a, b) {
-	                return a.index - b.index;
-	            }), function (x) {
-	                return x.value;
-	            }));
-	        });
-	    };
-	    async.filter = doParallel(_filter);
-	    async.filterSeries = doSeries(_filter);
-	    // select alias
-	    async.select = async.filter;
-	    async.selectSeries = async.filterSeries;
-
-	    var _reject = function (eachfn, arr, iterator, callback) {
-	        var results = [];
-	        arr = _map(arr, function (x, i) {
-	            return {index: i, value: x};
-	        });
-	        eachfn(arr, function (x, callback) {
-	            iterator(x.value, function (v) {
-	                if (!v) {
-	                    results.push(x);
-	                }
-	                callback();
-	            });
-	        }, function (err) {
-	            callback(_map(results.sort(function (a, b) {
-	                return a.index - b.index;
-	            }), function (x) {
-	                return x.value;
-	            }));
-	        });
-	    };
-	    async.reject = doParallel(_reject);
-	    async.rejectSeries = doSeries(_reject);
-
-	    var _detect = function (eachfn, arr, iterator, main_callback) {
-	        eachfn(arr, function (x, callback) {
-	            iterator(x, function (result) {
-	                if (result) {
-	                    main_callback(x);
-	                    main_callback = function () {};
-	                }
-	                else {
-	                    callback();
-	                }
-	            });
-	        }, function (err) {
-	            main_callback();
-	        });
-	    };
-	    async.detect = doParallel(_detect);
-	    async.detectSeries = doSeries(_detect);
-
-	    async.some = function (arr, iterator, main_callback) {
-	        async.each(arr, function (x, callback) {
-	            iterator(x, function (v) {
-	                if (v) {
-	                    main_callback(true);
-	                    main_callback = function () {};
-	                }
-	                callback();
-	            });
-	        }, function (err) {
-	            main_callback(false);
-	        });
-	    };
-	    // any alias
-	    async.any = async.some;
-
-	    async.every = function (arr, iterator, main_callback) {
-	        async.each(arr, function (x, callback) {
-	            iterator(x, function (v) {
-	                if (!v) {
-	                    main_callback(false);
-	                    main_callback = function () {};
-	                }
-	                callback();
-	            });
-	        }, function (err) {
-	            main_callback(true);
-	        });
-	    };
-	    // all alias
-	    async.all = async.every;
-
-	    async.sortBy = function (arr, iterator, callback) {
-	        async.map(arr, function (x, callback) {
-	            iterator(x, function (err, criteria) {
-	                if (err) {
-	                    callback(err);
-	                }
-	                else {
-	                    callback(null, {value: x, criteria: criteria});
-	                }
-	            });
-	        }, function (err, results) {
-	            if (err) {
-	                return callback(err);
-	            }
-	            else {
-	                var fn = function (left, right) {
-	                    var a = left.criteria, b = right.criteria;
-	                    return a < b ? -1 : a > b ? 1 : 0;
-	                };
-	                callback(null, _map(results.sort(fn), function (x) {
-	                    return x.value;
-	                }));
-	            }
-	        });
-	    };
-
-	    async.auto = function (tasks, callback) {
-	        callback = callback || function () {};
-	        var keys = _keys(tasks);
-	        var remainingTasks = keys.length
-	        if (!remainingTasks) {
-	            return callback();
-	        }
-
-	        var results = {};
-
-	        var listeners = [];
-	        var addListener = function (fn) {
-	            listeners.unshift(fn);
-	        };
-	        var removeListener = function (fn) {
-	            for (var i = 0; i < listeners.length; i += 1) {
-	                if (listeners[i] === fn) {
-	                    listeners.splice(i, 1);
-	                    return;
-	                }
-	            }
-	        };
-	        var taskComplete = function () {
-	            remainingTasks--
-	            _each(listeners.slice(0), function (fn) {
-	                fn();
-	            });
-	        };
-
-	        addListener(function () {
-	            if (!remainingTasks) {
-	                var theCallback = callback;
-	                // prevent final callback from calling itself if it errors
-	                callback = function () {};
-
-	                theCallback(null, results);
-	            }
-	        });
-
-	        _each(keys, function (k) {
-	            var task = _isArray(tasks[k]) ? tasks[k]: [tasks[k]];
-	            var taskCallback = function (err) {
-	                var args = Array.prototype.slice.call(arguments, 1);
-	                if (args.length <= 1) {
-	                    args = args[0];
-	                }
-	                if (err) {
-	                    var safeResults = {};
-	                    _each(_keys(results), function(rkey) {
-	                        safeResults[rkey] = results[rkey];
-	                    });
-	                    safeResults[k] = args;
-	                    callback(err, safeResults);
-	                    // stop subsequent errors hitting callback multiple times
-	                    callback = function () {};
-	                }
-	                else {
-	                    results[k] = args;
-	                    async.setImmediate(taskComplete);
-	                }
-	            };
-	            var requires = task.slice(0, Math.abs(task.length - 1)) || [];
-	            var ready = function () {
-	                return _reduce(requires, function (a, x) {
-	                    return (a && results.hasOwnProperty(x));
-	                }, true) && !results.hasOwnProperty(k);
-	            };
-	            if (ready()) {
-	                task[task.length - 1](taskCallback, results);
-	            }
-	            else {
-	                var listener = function () {
-	                    if (ready()) {
-	                        removeListener(listener);
-	                        task[task.length - 1](taskCallback, results);
-	                    }
-	                };
-	                addListener(listener);
-	            }
-	        });
-	    };
-
-	    async.retry = function(times, task, callback) {
-	        var DEFAULT_TIMES = 5;
-	        var attempts = [];
-	        // Use defaults if times not passed
-	        if (typeof times === 'function') {
-	            callback = task;
-	            task = times;
-	            times = DEFAULT_TIMES;
-	        }
-	        // Make sure times is a number
-	        times = parseInt(times, 10) || DEFAULT_TIMES;
-	        var wrappedTask = function(wrappedCallback, wrappedResults) {
-	            var retryAttempt = function(task, finalAttempt) {
-	                return function(seriesCallback) {
-	                    task(function(err, result){
-	                        seriesCallback(!err || finalAttempt, {err: err, result: result});
-	                    }, wrappedResults);
-	                };
-	            };
-	            while (times) {
-	                attempts.push(retryAttempt(task, !(times-=1)));
-	            }
-	            async.series(attempts, function(done, data){
-	                data = data[data.length - 1];
-	                (wrappedCallback || callback)(data.err, data.result);
-	            });
-	        }
-	        // If a callback is passed, run this as a controll flow
-	        return callback ? wrappedTask() : wrappedTask
-	    };
-
-	    async.waterfall = function (tasks, callback) {
-	        callback = callback || function () {};
-	        if (!_isArray(tasks)) {
-	          var err = new Error('First argument to waterfall must be an array of functions');
-	          return callback(err);
-	        }
-	        if (!tasks.length) {
-	            return callback();
-	        }
-	        var wrapIterator = function (iterator) {
-	            return function (err) {
-	                if (err) {
-	                    callback.apply(null, arguments);
-	                    callback = function () {};
-	                }
-	                else {
-	                    var args = Array.prototype.slice.call(arguments, 1);
-	                    var next = iterator.next();
-	                    if (next) {
-	                        args.push(wrapIterator(next));
-	                    }
-	                    else {
-	                        args.push(callback);
-	                    }
-	                    async.setImmediate(function () {
-	                        iterator.apply(null, args);
-	                    });
-	                }
-	            };
-	        };
-	        wrapIterator(async.iterator(tasks))();
-	    };
-
-	    var _parallel = function(eachfn, tasks, callback) {
-	        callback = callback || function () {};
-	        if (_isArray(tasks)) {
-	            eachfn.map(tasks, function (fn, callback) {
-	                if (fn) {
-	                    fn(function (err) {
-	                        var args = Array.prototype.slice.call(arguments, 1);
-	                        if (args.length <= 1) {
-	                            args = args[0];
-	                        }
-	                        callback.call(null, err, args);
-	                    });
-	                }
-	            }, callback);
-	        }
-	        else {
-	            var results = {};
-	            eachfn.each(_keys(tasks), function (k, callback) {
-	                tasks[k](function (err) {
-	                    var args = Array.prototype.slice.call(arguments, 1);
-	                    if (args.length <= 1) {
-	                        args = args[0];
-	                    }
-	                    results[k] = args;
-	                    callback(err);
-	                });
-	            }, function (err) {
-	                callback(err, results);
-	            });
-	        }
-	    };
-
-	    async.parallel = function (tasks, callback) {
-	        _parallel({ map: async.map, each: async.each }, tasks, callback);
-	    };
-
-	    async.parallelLimit = function(tasks, limit, callback) {
-	        _parallel({ map: _mapLimit(limit), each: _eachLimit(limit) }, tasks, callback);
-	    };
-
-	    async.series = function (tasks, callback) {
-	        callback = callback || function () {};
-	        if (_isArray(tasks)) {
-	            async.mapSeries(tasks, function (fn, callback) {
-	                if (fn) {
-	                    fn(function (err) {
-	                        var args = Array.prototype.slice.call(arguments, 1);
-	                        if (args.length <= 1) {
-	                            args = args[0];
-	                        }
-	                        callback.call(null, err, args);
-	                    });
-	                }
-	            }, callback);
-	        }
-	        else {
-	            var results = {};
-	            async.eachSeries(_keys(tasks), function (k, callback) {
-	                tasks[k](function (err) {
-	                    var args = Array.prototype.slice.call(arguments, 1);
-	                    if (args.length <= 1) {
-	                        args = args[0];
-	                    }
-	                    results[k] = args;
-	                    callback(err);
-	                });
-	            }, function (err) {
-	                callback(err, results);
-	            });
-	        }
-	    };
-
-	    async.iterator = function (tasks) {
-	        var makeCallback = function (index) {
-	            var fn = function () {
-	                if (tasks.length) {
-	                    tasks[index].apply(null, arguments);
-	                }
-	                return fn.next();
-	            };
-	            fn.next = function () {
-	                return (index < tasks.length - 1) ? makeCallback(index + 1): null;
-	            };
-	            return fn;
-	        };
-	        return makeCallback(0);
-	    };
-
-	    async.apply = function (fn) {
-	        var args = Array.prototype.slice.call(arguments, 1);
-	        return function () {
-	            return fn.apply(
-	                null, args.concat(Array.prototype.slice.call(arguments))
-	            );
-	        };
-	    };
-
-	    var _concat = function (eachfn, arr, fn, callback) {
-	        var r = [];
-	        eachfn(arr, function (x, cb) {
-	            fn(x, function (err, y) {
-	                r = r.concat(y || []);
-	                cb(err);
-	            });
-	        }, function (err) {
-	            callback(err, r);
-	        });
-	    };
-	    async.concat = doParallel(_concat);
-	    async.concatSeries = doSeries(_concat);
-
-	    async.whilst = function (test, iterator, callback) {
-	        if (test()) {
-	            iterator(function (err) {
-	                if (err) {
-	                    return callback(err);
-	                }
-	                async.whilst(test, iterator, callback);
-	            });
-	        }
-	        else {
-	            callback();
-	        }
-	    };
-
-	    async.doWhilst = function (iterator, test, callback) {
-	        iterator(function (err) {
-	            if (err) {
-	                return callback(err);
-	            }
-	            var args = Array.prototype.slice.call(arguments, 1);
-	            if (test.apply(null, args)) {
-	                async.doWhilst(iterator, test, callback);
-	            }
-	            else {
-	                callback();
-	            }
-	        });
-	    };
-
-	    async.until = function (test, iterator, callback) {
-	        if (!test()) {
-	            iterator(function (err) {
-	                if (err) {
-	                    return callback(err);
-	                }
-	                async.until(test, iterator, callback);
-	            });
-	        }
-	        else {
-	            callback();
-	        }
-	    };
-
-	    async.doUntil = function (iterator, test, callback) {
-	        iterator(function (err) {
-	            if (err) {
-	                return callback(err);
-	            }
-	            var args = Array.prototype.slice.call(arguments, 1);
-	            if (!test.apply(null, args)) {
-	                async.doUntil(iterator, test, callback);
-	            }
-	            else {
-	                callback();
-	            }
-	        });
-	    };
-
-	    async.queue = function (worker, concurrency) {
-	        if (concurrency === undefined) {
-	            concurrency = 1;
-	        }
-	        function _insert(q, data, pos, callback) {
-	          if (!q.started){
-	            q.started = true;
-	          }
-	          if (!_isArray(data)) {
-	              data = [data];
-	          }
-	          if(data.length == 0) {
-	             // call drain immediately if there are no tasks
-	             return async.setImmediate(function() {
-	                 if (q.drain) {
-	                     q.drain();
-	                 }
-	             });
-	          }
-	          _each(data, function(task) {
-	              var item = {
-	                  data: task,
-	                  callback: typeof callback === 'function' ? callback : null
-	              };
-
-	              if (pos) {
-	                q.tasks.unshift(item);
-	              } else {
-	                q.tasks.push(item);
-	              }
-
-	              if (q.saturated && q.tasks.length === q.concurrency) {
-	                  q.saturated();
-	              }
-	              async.setImmediate(q.process);
-	          });
-	        }
-
-	        var workers = 0;
-	        var q = {
-	            tasks: [],
-	            concurrency: concurrency,
-	            saturated: null,
-	            empty: null,
-	            drain: null,
-	            started: false,
-	            paused: false,
-	            push: function (data, callback) {
-	              _insert(q, data, false, callback);
-	            },
-	            kill: function () {
-	              q.drain = null;
-	              q.tasks = [];
-	            },
-	            unshift: function (data, callback) {
-	              _insert(q, data, true, callback);
-	            },
-	            process: function () {
-	                if (!q.paused && workers < q.concurrency && q.tasks.length) {
-	                    var task = q.tasks.shift();
-	                    if (q.empty && q.tasks.length === 0) {
-	                        q.empty();
-	                    }
-	                    workers += 1;
-	                    var next = function () {
-	                        workers -= 1;
-	                        if (task.callback) {
-	                            task.callback.apply(task, arguments);
-	                        }
-	                        if (q.drain && q.tasks.length + workers === 0) {
-	                            q.drain();
-	                        }
-	                        q.process();
-	                    };
-	                    var cb = only_once(next);
-	                    worker(task.data, cb);
-	                }
-	            },
-	            length: function () {
-	                return q.tasks.length;
-	            },
-	            running: function () {
-	                return workers;
-	            },
-	            idle: function() {
-	                return q.tasks.length + workers === 0;
-	            },
-	            pause: function () {
-	                if (q.paused === true) { return; }
-	                q.paused = true;
-	                q.process();
-	            },
-	            resume: function () {
-	                if (q.paused === false) { return; }
-	                q.paused = false;
-	                q.process();
-	            }
-	        };
-	        return q;
-	    };
-	    
-	    async.priorityQueue = function (worker, concurrency) {
-	        
-	        function _compareTasks(a, b){
-	          return a.priority - b.priority;
-	        };
-	        
-	        function _binarySearch(sequence, item, compare) {
-	          var beg = -1,
-	              end = sequence.length - 1;
-	          while (beg < end) {
-	            var mid = beg + ((end - beg + 1) >>> 1);
-	            if (compare(item, sequence[mid]) >= 0) {
-	              beg = mid;
-	            } else {
-	              end = mid - 1;
-	            }
-	          }
-	          return beg;
-	        }
-	        
-	        function _insert(q, data, priority, callback) {
-	          if (!q.started){
-	            q.started = true;
-	          }
-	          if (!_isArray(data)) {
-	              data = [data];
-	          }
-	          if(data.length == 0) {
-	             // call drain immediately if there are no tasks
-	             return async.setImmediate(function() {
-	                 if (q.drain) {
-	                     q.drain();
-	                 }
-	             });
-	          }
-	          _each(data, function(task) {
-	              var item = {
-	                  data: task,
-	                  priority: priority,
-	                  callback: typeof callback === 'function' ? callback : null
-	              };
-	              
-	              q.tasks.splice(_binarySearch(q.tasks, item, _compareTasks) + 1, 0, item);
-
-	              if (q.saturated && q.tasks.length === q.concurrency) {
-	                  q.saturated();
-	              }
-	              async.setImmediate(q.process);
-	          });
-	        }
-	        
-	        // Start with a normal queue
-	        var q = async.queue(worker, concurrency);
-	        
-	        // Override push to accept second parameter representing priority
-	        q.push = function (data, priority, callback) {
-	          _insert(q, data, priority, callback);
-	        };
-	        
-	        // Remove unshift function
-	        delete q.unshift;
-
-	        return q;
-	    };
-
-	    async.cargo = function (worker, payload) {
-	        var working     = false,
-	            tasks       = [];
-
-	        var cargo = {
-	            tasks: tasks,
-	            payload: payload,
-	            saturated: null,
-	            empty: null,
-	            drain: null,
-	            drained: true,
-	            push: function (data, callback) {
-	                if (!_isArray(data)) {
-	                    data = [data];
-	                }
-	                _each(data, function(task) {
-	                    tasks.push({
-	                        data: task,
-	                        callback: typeof callback === 'function' ? callback : null
-	                    });
-	                    cargo.drained = false;
-	                    if (cargo.saturated && tasks.length === payload) {
-	                        cargo.saturated();
-	                    }
-	                });
-	                async.setImmediate(cargo.process);
-	            },
-	            process: function process() {
-	                if (working) return;
-	                if (tasks.length === 0) {
-	                    if(cargo.drain && !cargo.drained) cargo.drain();
-	                    cargo.drained = true;
-	                    return;
-	                }
-
-	                var ts = typeof payload === 'number'
-	                            ? tasks.splice(0, payload)
-	                            : tasks.splice(0, tasks.length);
-
-	                var ds = _map(ts, function (task) {
-	                    return task.data;
-	                });
-
-	                if(cargo.empty) cargo.empty();
-	                working = true;
-	                worker(ds, function () {
-	                    working = false;
-
-	                    var args = arguments;
-	                    _each(ts, function (data) {
-	                        if (data.callback) {
-	                            data.callback.apply(null, args);
-	                        }
-	                    });
-
-	                    process();
-	                });
-	            },
-	            length: function () {
-	                return tasks.length;
-	            },
-	            running: function () {
-	                return working;
-	            }
-	        };
-	        return cargo;
-	    };
-
-	    var _console_fn = function (name) {
-	        return function (fn) {
-	            var args = Array.prototype.slice.call(arguments, 1);
-	            fn.apply(null, args.concat([function (err) {
-	                var args = Array.prototype.slice.call(arguments, 1);
-	                if (typeof console !== 'undefined') {
-	                    if (err) {
-	                        if (console.error) {
-	                            console.error(err);
-	                        }
-	                    }
-	                    else if (console[name]) {
-	                        _each(args, function (x) {
-	                            console[name](x);
-	                        });
-	                    }
-	                }
-	            }]));
-	        };
-	    };
-	    async.log = _console_fn('log');
-	    async.dir = _console_fn('dir');
-	    /*async.info = _console_fn('info');
-	    async.warn = _console_fn('warn');
-	    async.error = _console_fn('error');*/
-
-	    async.memoize = function (fn, hasher) {
-	        var memo = {};
-	        var queues = {};
-	        hasher = hasher || function (x) {
-	            return x;
-	        };
-	        var memoized = function () {
-	            var args = Array.prototype.slice.call(arguments);
-	            var callback = args.pop();
-	            var key = hasher.apply(null, args);
-	            if (key in memo) {
-	                async.nextTick(function () {
-	                    callback.apply(null, memo[key]);
-	                });
-	            }
-	            else if (key in queues) {
-	                queues[key].push(callback);
-	            }
-	            else {
-	                queues[key] = [callback];
-	                fn.apply(null, args.concat([function () {
-	                    memo[key] = arguments;
-	                    var q = queues[key];
-	                    delete queues[key];
-	                    for (var i = 0, l = q.length; i < l; i++) {
-	                      q[i].apply(null, arguments);
-	                    }
-	                }]));
-	            }
-	        };
-	        memoized.memo = memo;
-	        memoized.unmemoized = fn;
-	        return memoized;
-	    };
-
-	    async.unmemoize = function (fn) {
-	      return function () {
-	        return (fn.unmemoized || fn).apply(null, arguments);
-	      };
-	    };
-
-	    async.times = function (count, iterator, callback) {
-	        var counter = [];
-	        for (var i = 0; i < count; i++) {
-	            counter.push(i);
-	        }
-	        return async.map(counter, iterator, callback);
-	    };
-
-	    async.timesSeries = function (count, iterator, callback) {
-	        var counter = [];
-	        for (var i = 0; i < count; i++) {
-	            counter.push(i);
-	        }
-	        return async.mapSeries(counter, iterator, callback);
-	    };
-
-	    async.seq = function (/* functions... */) {
-	        var fns = arguments;
-	        return function () {
-	            var that = this;
-	            var args = Array.prototype.slice.call(arguments);
-	            var callback = args.pop();
-	            async.reduce(fns, args, function (newargs, fn, cb) {
-	                fn.apply(that, newargs.concat([function () {
-	                    var err = arguments[0];
-	                    var nextargs = Array.prototype.slice.call(arguments, 1);
-	                    cb(err, nextargs);
-	                }]))
-	            },
-	            function (err, results) {
-	                callback.apply(that, [err].concat(results));
-	            });
-	        };
-	    };
-
-	    async.compose = function (/* functions... */) {
-	      return async.seq.apply(null, Array.prototype.reverse.call(arguments));
-	    };
-
-	    var _applyEach = function (eachfn, fns /*args...*/) {
-	        var go = function () {
-	            var that = this;
-	            var args = Array.prototype.slice.call(arguments);
-	            var callback = args.pop();
-	            return eachfn(fns, function (fn, cb) {
-	                fn.apply(that, args.concat([cb]));
-	            },
-	            callback);
-	        };
-	        if (arguments.length > 2) {
-	            var args = Array.prototype.slice.call(arguments, 2);
-	            return go.apply(this, args);
-	        }
-	        else {
-	            return go;
-	        }
-	    };
-	    async.applyEach = doParallel(_applyEach);
-	    async.applyEachSeries = doSeries(_applyEach);
-
-	    async.forever = function (fn, callback) {
-	        function next(err) {
-	            if (err) {
-	                if (callback) {
-	                    return callback(err);
-	                }
-	                throw err;
-	            }
-	            fn(next);
-	        }
-	        next();
-	    };
-
-	    // Node.js
-	    if (typeof module !== 'undefined' && module.exports) {
-	        module.exports = async;
-	    }
-	    // AMD / RequireJS
-	    else if (typeof define !== 'undefined' && define.amd) {
-	        define([], function () {
-	            return async;
-	        });
-	    }
-	    // included directly via <script> tag
-	    else {
-	        root.async = async;
-	    }
-
-	}());
-
-	}).call(this,require('_process'))
-
-	},{"_process":3}],129:[function(require,module,exports){
-	'use strict';
-
-	//
-	// We store our EE objects in a plain object whose properties are event names.
-	// If `Object.create(null)` is not supported we prefix the event names with a
-	// `~` to make sure that the built-in object properties are not overridden or
-	// used as an attack vector.
-	// We also assume that `Object.create(null)` is available when the event name
-	// is an ES6 Symbol.
-	//
-	var prefix = typeof Object.create !== 'function' ? '~' : false;
-
-	/**
-	 * Representation of a single EventEmitter function.
-	 *
-	 * @param {Function} fn Event handler to be called.
-	 * @param {Mixed} context Context for function execution.
-	 * @param {Boolean} once Only emit once
-	 * @api private
-	 */
-	function EE(fn, context, once) {
-	  this.fn = fn;
-	  this.context = context;
-	  this.once = once || false;
-	}
-
-	/**
-	 * Minimal EventEmitter interface that is molded against the Node.js
-	 * EventEmitter interface.
-	 *
-	 * @constructor
-	 * @api public
-	 */
-	function EventEmitter() { /* Nothing to set */ }
-
-	/**
-	 * Holds the assigned EventEmitters by name.
-	 *
-	 * @type {Object}
-	 * @private
-	 */
-	EventEmitter.prototype._events = undefined;
-
-	/**
-	 * Return a list of assigned event listeners.
-	 *
-	 * @param {String} event The events that should be listed.
-	 * @param {Boolean} exists We only need to know if there are listeners.
-	 * @returns {Array|Boolean}
-	 * @api public
-	 */
-	EventEmitter.prototype.listeners = function listeners(event, exists) {
-	  var evt = prefix ? prefix + event : event
-	    , available = this._events && this._events[evt];
-
-	  if (exists) return !!available;
-	  if (!available) return [];
-	  if (this._events[evt].fn) return [this._events[evt].fn];
-
-	  for (var i = 0, l = this._events[evt].length, ee = new Array(l); i < l; i++) {
-	    ee[i] = this._events[evt][i].fn;
-	  }
-
-	  return ee;
-	};
-
-	/**
-	 * Emit an event to all registered event listeners.
-	 *
-	 * @param {String} event The name of the event.
-	 * @returns {Boolean} Indication if we've emitted an event.
-	 * @api public
-	 */
-	EventEmitter.prototype.emit = function emit(event, a1, a2, a3, a4, a5) {
-	  var evt = prefix ? prefix + event : event;
-
-	  if (!this._events || !this._events[evt]) return false;
-
-	  var listeners = this._events[evt]
-	    , len = arguments.length
-	    , args
-	    , i;
-
-	  if ('function' === typeof listeners.fn) {
-	    if (listeners.once) this.removeListener(event, listeners.fn, undefined, true);
-
-	    switch (len) {
-	      case 1: return listeners.fn.call(listeners.context), true;
-	      case 2: return listeners.fn.call(listeners.context, a1), true;
-	      case 3: return listeners.fn.call(listeners.context, a1, a2), true;
-	      case 4: return listeners.fn.call(listeners.context, a1, a2, a3), true;
-	      case 5: return listeners.fn.call(listeners.context, a1, a2, a3, a4), true;
-	      case 6: return listeners.fn.call(listeners.context, a1, a2, a3, a4, a5), true;
-	    }
-
-	    for (i = 1, args = new Array(len -1); i < len; i++) {
-	      args[i - 1] = arguments[i];
-	    }
-
-	    listeners.fn.apply(listeners.context, args);
-	  } else {
-	    var length = listeners.length
-	      , j;
-
-	    for (i = 0; i < length; i++) {
-	      if (listeners[i].once) this.removeListener(event, listeners[i].fn, undefined, true);
-
-	      switch (len) {
-	        case 1: listeners[i].fn.call(listeners[i].context); break;
-	        case 2: listeners[i].fn.call(listeners[i].context, a1); break;
-	        case 3: listeners[i].fn.call(listeners[i].context, a1, a2); break;
-	        default:
-	          if (!args) for (j = 1, args = new Array(len -1); j < len; j++) {
-	            args[j - 1] = arguments[j];
-	          }
-
-	          listeners[i].fn.apply(listeners[i].context, args);
-	      }
-	    }
-	  }
-
-	  return true;
-	};
-
-	/**
-	 * Register a new EventListener for the given event.
-	 *
-	 * @param {String} event Name of the event.
-	 * @param {Functon} fn Callback function.
-	 * @param {Mixed} context The context of the function.
-	 * @api public
-	 */
-	EventEmitter.prototype.on = function on(event, fn, context) {
-	  var listener = new EE(fn, context || this)
-	    , evt = prefix ? prefix + event : event;
-
-	  if (!this._events) this._events = prefix ? {} : Object.create(null);
-	  if (!this._events[evt]) this._events[evt] = listener;
-	  else {
-	    if (!this._events[evt].fn) this._events[evt].push(listener);
-	    else this._events[evt] = [
-	      this._events[evt], listener
-	    ];
-	  }
-
-	  return this;
-	};
-
-	/**
-	 * Add an EventListener that's only called once.
-	 *
-	 * @param {String} event Name of the event.
-	 * @param {Function} fn Callback function.
-	 * @param {Mixed} context The context of the function.
-	 * @api public
-	 */
-	EventEmitter.prototype.once = function once(event, fn, context) {
-	  var listener = new EE(fn, context || this, true)
-	    , evt = prefix ? prefix + event : event;
-
-	  if (!this._events) this._events = prefix ? {} : Object.create(null);
-	  if (!this._events[evt]) this._events[evt] = listener;
-	  else {
-	    if (!this._events[evt].fn) this._events[evt].push(listener);
-	    else this._events[evt] = [
-	      this._events[evt], listener
-	    ];
-	  }
-
-	  return this;
-	};
-
-	/**
-	 * Remove event listeners.
-	 *
-	 * @param {String} event The event we want to remove.
-	 * @param {Function} fn The listener that we need to find.
-	 * @param {Mixed} context Only remove listeners matching this context.
-	 * @param {Boolean} once Only remove once listeners.
-	 * @api public
-	 */
-	EventEmitter.prototype.removeListener = function removeListener(event, fn, context, once) {
-	  var evt = prefix ? prefix + event : event;
-
-	  if (!this._events || !this._events[evt]) return this;
-
-	  var listeners = this._events[evt]
-	    , events = [];
-
-	  if (fn) {
-	    if (listeners.fn) {
-	      if (
-	           listeners.fn !== fn
-	        || (once && !listeners.once)
-	        || (context && listeners.context !== context)
-	      ) {
-	        events.push(listeners);
-	      }
-	    } else {
-	      for (var i = 0, length = listeners.length; i < length; i++) {
-	        if (
-	             listeners[i].fn !== fn
-	          || (once && !listeners[i].once)
-	          || (context && listeners[i].context !== context)
-	        ) {
-	          events.push(listeners[i]);
-	        }
-	      }
-	    }
-	  }
-
-	  //
-	  // Reset the array, or remove it completely if we have no more listeners.
-	  //
-	  if (events.length) {
-	    this._events[evt] = events.length === 1 ? events[0] : events;
-	  } else {
-	    delete this._events[evt];
-	  }
-
-	  return this;
-	};
-
-	/**
-	 * Remove all listeners or only the listeners for the specified event.
-	 *
-	 * @param {String} event The event want to remove all listeners for.
-	 * @api public
-	 */
-	EventEmitter.prototype.removeAllListeners = function removeAllListeners(event) {
-	  if (!this._events) return this;
-
-	  if (event) delete this._events[prefix ? prefix + event : event];
-	  else this._events = prefix ? {} : Object.create(null);
-
-	  return this;
-	};
-
-	//
-	// Alias methods names because people roll like that.
-	//
-	EventEmitter.prototype.off = EventEmitter.prototype.removeListener;
-	EventEmitter.prototype.addListener = EventEmitter.prototype.on;
-
-	//
-	// This function doesn't apply anymore.
-	//
-	EventEmitter.prototype.setMaxListeners = function setMaxListeners() {
-	  return this;
-	};
-
-	//
-	// Expose the prefix.
-	//
-	EventEmitter.prefixed = prefix;
-
-	//
-	// Expose the module.
-	//
-	module.exports = EventEmitter;
-
-	},{}],130:[function(require,module,exports){
-	var async       = require('async'),
-	    urlParser   = require('url'),
-	    Resource    = require('./Resource'),
-	    EventEmitter = require('eventemitter3');
-
-	/**
-	 * Manages the state and loading of multiple resources to load.
-	 *
-	 * @class
-	 * @param [baseUrl=''] {string} The base url for all resources loaded by this loader.
-	 * @param [concurrency=10] {number} The number of resources to load concurrently.
-	 */
-	function Loader(baseUrl, concurrency) {
-	    EventEmitter.call(this);
-
-	    concurrency = concurrency || 10;
-
-	    /**
-	     * The base url for all resources loaded by this loader.
-	     *
-	     * @member {string}
-	     */
-	    this.baseUrl = baseUrl || '';
-
-	    /**
-	     * The progress percent of the loader going through the queue.
-	     *
-	     * @member {number}
-	     */
-	    this.progress = 0;
-
-	    /**
-	     * Loading state of the loader, true if it is currently loading resources.
-	     *
-	     * @member {boolean}
-	     */
-	    this.loading = false;
-
-	    /**
-	     * The percentage of total progress that a single resource represents.
-	     *
-	     * @member {number}
-	     */
-	    this._progressChunk = 0;
-
-	    /**
-	     * The middleware to run before loading each resource.
-	     *
-	     * @member {function[]}
-	     */
-	    this._beforeMiddleware = [];
-
-	    /**
-	     * The middleware to run after loading each resource.
-	     *
-	     * @member {function[]}
-	     */
-	    this._afterMiddleware = [];
-
-	    /**
-	     * The `_loadResource` function bound with this object context.
-	     *
-	     * @private
-	     * @member {function}
-	     */
-	    this._boundLoadResource = this._loadResource.bind(this);
-
-	    /**
-	     * The `_onLoad` function bound with this object context.
-	     *
-	     * @private
-	     * @member {function}
-	     */
-	    this._boundOnLoad = this._onLoad.bind(this);
-
-	    /**
-	     * The resource buffer that fills until `load` is called to start loading resources.
-	     *
-	     * @private
-	     * @member {Resource[]}
-	     */
-	    this._buffer = [];
-
-	    /**
-	     * Used to track load completion.
-	     *
-	     * @private
-	     * @member {number}
-	     */
-	    this._numToLoad = 0;
-
-	    /**
-	     * The resources waiting to be loaded.
-	     *
-	     * @private
-	     * @member {Resource[]}
-	     */
-	    this._queue = async.queue(this._boundLoadResource, concurrency);
-
-	    /**
-	     * All the resources for this loader keyed by name.
-	     *
-	     * @member {object<string, Resource>}
-	     */
-	    this.resources = {};
-
-	    /**
-	     * Emitted once per loaded or errored resource.
-	     *
-	     * @event progress
-	     * @memberof Loader#
-	     */
-
-	    /**
-	     * Emitted once per errored resource.
-	     *
-	     * @event error
-	     * @memberof Loader#
-	     */
-
-	    /**
-	     * Emitted once per loaded resource.
-	     *
-	     * @event load
-	     * @memberof Loader#
-	     */
-
-	    /**
-	     * Emitted when the loader begins to process the queue.
-	     *
-	     * @event start
-	     * @memberof Loader#
-	     */
-
-	    /**
-	     * Emitted when the queued resources all load.
-	     *
-	     * @event complete
-	     * @memberof Loader#
-	     */
-	}
-
-	Loader.prototype = Object.create(EventEmitter.prototype);
-	Loader.prototype.constructor = Loader;
-	module.exports = Loader;
-
-	/**
-	 * Adds a resource (or multiple resources) to the loader queue.
-	 *
-	 * This function can take a wide variety of different parameters. The only thing that is always
-	 * required the url to load. All the following will work:
-	 *
-	 * ```js
-	 * loader
-	 *     // normal param syntax
-	 *     .add('key', 'http://...', function () {})
-	 *     .add('http://...', function () {})
-	 *     .add('http://...')
-	 *
-	 *     // object syntax
-	 *     .add({
-	 *         name: 'key2',
-	 *         url: 'http://...'
-	 *     }, function () {})
-	 *     .add({
-	 *         url: 'http://...'
-	 *     }, function () {})
-	 *     .add({
-	 *         name: 'key3',
-	 *         url: 'http://...'
-	 *         onComplete: function () {}
-	 *     })
-	 *     .add({
-	 *         url: 'https://...',
-	 *         onComplete: function () {},
-	 *         crossOrigin: true
-	 *     })
-	 *
-	 *     // you can also pass an array of objects or urls or both
-	 *     .add([
-	 *         { name: 'key4', url: 'http://...', onComplete: function () {} },
-	 *         { url: 'http://...', onComplete: function () {} },
-	 *         'http://...'
-	 *     ]);
-	 * ```
-	 *
-	 * @alias enqueue
-	 * @param [name] {string} The name of the resource to load, if not passed the url is used.
-	 * @param url {string} The url for this resource, relative to the baseUrl of this loader.
-	 * @param [options] {object} The options for the load.
-	 * @param [options.crossOrigin] {boolean} Is this request cross-origin? Default is to determine automatically.
-	 * @param [options.loadType=Resource.LOAD_TYPE.XHR] {Resource.XHR_LOAD_TYPE} How should this resource be loaded?
-	 * @param [options.xhrType=Resource.XHR_RESPONSE_TYPE.DEFAULT] {Resource.XHR_RESPONSE_TYPE} How should the data being
-	 *      loaded be interpreted when using XHR?
-	 * @param [callback] {function} Function to call when this specific resource completes loading.
-	 * @return {Loader}
-	 */
-	Loader.prototype.add = Loader.prototype.enqueue = function (name, url, options, cb) {
-	    // special case of an array of objects or urls
-	    if (Array.isArray(name)) {
-	        for (var i = 0; i < name.length; ++i) {
-	            this.add(name[i]);
-	        }
-
-	        return this;
-	    }
-
-	    // if an object is passed instead of params
-	    if (typeof name === 'object') {
-	        cb = url || name.callback || name.onComplete;
-	        options = name;
-	        url = name.url;
-	        name = name.name || name.key || name.url;
-	    }
-
-	    // case where no name is passed shift all args over by one.
-	    if (typeof url !== 'string') {
-	        cb = options;
-	        options = url;
-	        url = name;
-	    }
-
-	    // now that we shifted make sure we have a proper url.
-	    if (typeof url !== 'string') {
-	        throw new Error('No url passed to add resource to loader.');
-	    }
-
-	    // options are optional so people might pass a function and no options
-	    if (typeof options === 'function') {
-	        cb = options;
-	        options = null;
-	    }
-
-	    // check if resource already exists.
-	    if (this.resources[name]) {
-	        throw new Error('Resource with name "' + name + '" already exists.');
-	    }
-
-	    // add base url if this isn't an absolute url
-	    url = this._handleBaseUrl(url);
-
-	    // create the store the resource
-	    this.resources[name] = new Resource(name, url, options);
-
-	    if (typeof cb === 'function') {
-	        this.resources[name].once('afterMiddleware', cb);
-	    }
-
-	    this._numToLoad++;
-
-	    // if already loading add it to the worker queue
-	    if (this._queue.started) {
-	        this._queue.push(this.resources[name]);
-	        this._progressChunk = (100 - this.progress) / (this._queue.length() + this._queue.running());
-	    }
-	    // otherwise buffer it to be added to the queue later
-	    else {
-	        this._buffer.push(this.resources[name]);
-	        this._progressChunk = 100 / this._buffer.length;
-	    }
-
-	    return this;
-	};
-
-	Loader.prototype._handleBaseUrl = function (url) {
-	    var parsedUrl = urlParser.parse(url);
-
-	    // absolute url, just use it as is.
-	    if (parsedUrl.protocol || parsedUrl.pathname.indexOf('//') === 0) {
-	        return url;
-	    }
-
-	    // if baseUrl doesn't end in slash and url doesn't start with slash, then add a slash inbetween
-	    if (
-	        this.baseUrl.length &&
-	        this.baseUrl.lastIndexOf('/') !== this.baseUrl.length - 1 &&
-	        url.charAt(0) !== '/'
-	    ) {
-	        return this.baseUrl + '/' + url;
-	    }
-	    else {
-	        return this.baseUrl + url;
-	    }
-	};
-
-
-	/**
-	 * Sets up a middleware function that will run *before* the
-	 * resource is loaded.
-	 *
-	 * @alias pre
-	 * @param middleware {function} The middleware function to register.
-	 * @return {Loader}
-	 */
-	Loader.prototype.before = Loader.prototype.pre = function (fn) {
-	    this._beforeMiddleware.push(fn);
-
-	    return this;
-	};
-
-	/**
-	 * Sets up a middleware function that will run *after* the
-	 * resource is loaded.
-	 *
-	 * @alias use
-	 * @param middleware {function} The middleware function to register.
-	 * @return {Loader}
-	 */
-	Loader.prototype.after = Loader.prototype.use = function (fn) {
-	    this._afterMiddleware.push(fn);
-
-	    return this;
-	};
-
-	/**
-	 * Resets the queue of the loader to prepare for a new load.
-	 *
-	 * @return {Loader}
-	 */
-	Loader.prototype.reset = function () {
-	    // this.baseUrl = baseUrl || '';
-
-	    this.progress = 0;
-
-	    this.loading = false;
-
-	    this._progressChunk = 0;
-
-	    // this._beforeMiddleware.length = 0;
-	    // this._afterMiddleware.length = 0;
-
-	    this._buffer.length = 0;
-
-	    this._numToLoad = 0;
-
-	    this._queue.kill();
-	    this._queue.started = false;
-
-	    this.resources = {};
-	};
-
-	/**
-	 * Starts loading the queued resources.
-	 *
-	 * @fires start
-	 * @param [callback] {function} Optional callback that will be bound to the `complete` event.
-	 * @return {Loader}
-	 */
-	Loader.prototype.load = function (cb) {
-	    // register complete callback if they pass one
-	    if (typeof cb === 'function') {
-	        this.once('complete', cb);
-	    }
-
-	    // if the queue has already started we are done here
-	    if (this._queue.started) {
-	        return this;
-	    }
-
-	    // notify of start
-	    this.emit('start', this);
-
-	    // start the internal queue
-	    for (var i = 0; i < this._buffer.length; ++i) {
-	        this._queue.push(this._buffer[i]);
-	    }
-
-	    // empty the buffer
-	    this._buffer.length = 0;
-
-	    return this;
-	};
-
-	/**
-	 * Loads a single resource.
-	 *
-	 * @fires progress
-	 * @private
-	 */
-	Loader.prototype._loadResource = function (resource, dequeue) {
-	    var self = this;
-
-	    resource._dequeue = dequeue;
-
-	    this._runMiddleware(resource, this._beforeMiddleware, function () {
-	        // resource.on('progress', self.emit.bind(self, 'progress'));
-
-	        resource.load(self._boundOnLoad);
-	    });
-	};
-
-	/**
-	 * Called once each resource has loaded.
-	 *
-	 * @fires complete
-	 * @private
-	 */
-	Loader.prototype._onComplete = function () {
-	    this.emit('complete', this, this.resources);
-	};
-
-	/**
-	 * Called each time a resources is loaded.
-	 *
-	 * @fires progress
-	 * @fires error
-	 * @fires load
-	 * @private
-	 */
-	Loader.prototype._onLoad = function (resource) {
-	    this.progress += this._progressChunk;
-
-	    this.emit('progress', this, resource);
-
-	    // run middleware, this *must* happen before dequeue so sub-assets get added properly
-	    this._runMiddleware(resource, this._afterMiddleware, function () {
-	        resource.emit('afterMiddleware', resource);
-
-	        this._numToLoad--;
-
-	        // do completion check
-	        if (this._numToLoad === 0) {
-	            this.progress = 100;
-	            this._onComplete();
-	        }
-	        
-	        if (resource.error) {
-	            this.emit('error', resource.error, this, resource);
-	        }
-	        else {
-	            this.emit('load', this, resource);
-	        }
-	    });
-	    
-
-
-	    // remove this resource from the async queue
-	    resource._dequeue();
-	};
-
-	/**
-	 * Run middleware functions on a resource.
-	 *
-	 * @private
-	 */
-	Loader.prototype._runMiddleware = function (resource, fns, cb) {
-	    var self = this;
-
-	    async.eachSeries(fns, function (fn, next) {
-	        fn.call(self, resource, next);
-	    }, cb.bind(this, resource));
-	};
-
-	Loader.LOAD_TYPE = Resource.LOAD_TYPE;
-	Loader.XHR_READY_STATE = Resource.XHR_READY_STATE;
-	Loader.XHR_RESPONSE_TYPE = Resource.XHR_RESPONSE_TYPE;
-
-	},{"./Resource":131,"async":128,"eventemitter3":129,"url":8}],131:[function(require,module,exports){
-	var EventEmitter = require('eventemitter3'),
-	    _url = require('url'),
-	    // tests is CORS is supported in XHR, if not we need to use XDR
-	    useXdr = !!(window.XDomainRequest && !('withCredentials' in (new XMLHttpRequest()))),
-	    tempAnchor = null;
-
-	/**
-	 * Manages the state and loading of a single resource represented by
-	 * a single URL.
-	 *
-	 * @class
-	 * @param name {string} The name of the resource to load.
-	 * @param url {string|string[]} The url for this resource, for audio/video loads you can pass an array of sources.
-	 * @param [options] {object} The options for the load.
-	 * @param [options.crossOrigin] {string|boolean} Is this request cross-origin? Default is to determine automatically.
-	 * @param [options.loadType=Resource.LOAD_TYPE.XHR] {Resource.LOAD_TYPE} How should this resource be loaded?
-	 * @param [options.xhrType=Resource.XHR_RESPONSE_TYPE.DEFAULT] {Resource.XHR_RESPONSE_TYPE} How should the data being
-	 *      loaded be interpreted when using XHR?
-	 * @param [options.metadata] {object} Extra info for middleware.
-	 */
-	function Resource(name, url, options) {
-	    EventEmitter.call(this);
-
-	    options = options || {};
-
-	    if (typeof name !== 'string' || typeof url !== 'string') {
-	        throw new Error('Both name and url are required for constructing a resource.');
-	    }
-
-	    /**
-	     * The name of this resource.
-	     *
-	     * @member {string}
-	     * @readonly
-	     */
-	    this.name = name;
-
-	    /**
-	     * The url used to load this resource.
-	     *
-	     * @member {string}
-	     * @readonly
-	     */
-	    this.url = url;
-
-	    /**
-	     * Stores whether or not this url is a data url.
-	     *
-	     * @member {boolean}
-	     * @readonly
-	     */
-	    this.isDataUrl = this.url.indexOf('data:') === 0;
-
-	    /**
-	     * The data that was loaded by the resource.
-	     *
-	     * @member {any}
-	     */
-	    this.data = null;
-
-	    /**
-	     * Is this request cross-origin? If unset, determined automatically.
-	     *
-	     * @member {string}
-	     */
-	    this.crossOrigin = options.crossOrigin === true ? 'anonymous' : options.crossOrigin;
-
-	    /**
-	     * The method of loading to use for this resource.
-	     *
-	     * @member {Resource.LOAD_TYPE}
-	     */
-	    this.loadType = options.loadType || this._determineLoadType();
-
-	    /**
-	     * The type used to load the resource via XHR. If unset, determined automatically.
-	     *
-	     * @member {string}
-	     */
-	    this.xhrType = options.xhrType;
-
-	    /**
-	     * Extra info for middleware
-	     *
-	     * @member {object}
-	     */
-	    this.metadata = options.metadata || {};
-
-	    /**
-	     * The error that occurred while loading (if any).
-	     *
-	     * @member {Error}
-	     * @readonly
-	     */
-	    this.error = null;
-
-	    /**
-	     * The XHR object that was used to load this resource. This is only set
-	     * when `loadType` is `Resource.LOAD_TYPE.XHR`.
-	     *
-	     * @member {XMLHttpRequest}
-	     */
-	    this.xhr = null;
-
-	    /**
-	     * Describes if this resource was loaded as json. Only valid after the resource
-	     * has completely loaded.
-	     *
-	     * @member {boolean}
-	     */
-	    this.isJson = false;
-
-	    /**
-	     * Describes if this resource was loaded as xml. Only valid after the resource
-	     * has completely loaded.
-	     *
-	     * @member {boolean}
-	     */
-	    this.isXml = false;
-
-	    /**
-	     * Describes if this resource was loaded as an image tag. Only valid after the resource
-	     * has completely loaded.
-	     *
-	     * @member {boolean}
-	     */
-	    this.isImage = false;
-
-	    /**
-	     * Describes if this resource was loaded as an audio tag. Only valid after the resource
-	     * has completely loaded.
-	     *
-	     * @member {boolean}
-	     */
-	    this.isAudio = false;
-
-	    /**
-	     * Describes if this resource was loaded as a video tag. Only valid after the resource
-	     * has completely loaded.
-	     *
-	     * @member {boolean}
-	     */
-	    this.isVideo = false;
-
-	    /**
-	     * The `dequeue` method that will be used a storage place for the async queue dequeue method
-	     * used privately by the loader.
-	     *
-	     * @member {function}
-	     * @private
-	     */
-	    this._dequeue = null;
-
-	    /**
-	     * The `complete` function bound to this resource's context.
-	     *
-	     * @member {function}
-	     * @private
-	     */
-	    this._boundComplete = this.complete.bind(this);
-
-	    /**
-	     * The `_onError` function bound to this resource's context.
-	     *
-	     * @member {function}
-	     * @private
-	     */
-	    this._boundOnError = this._onError.bind(this);
-
-	    /**
-	     * The `_onProgress` function bound to this resource's context.
-	     *
-	     * @member {function}
-	     * @private
-	     */
-	    this._boundOnProgress = this._onProgress.bind(this);
-
-	    // xhr callbacks
-	    this._boundXhrOnError = this._xhrOnError.bind(this);
-	    this._boundXhrOnAbort = this._xhrOnAbort.bind(this);
-	    this._boundXhrOnLoad = this._xhrOnLoad.bind(this);
-	    this._boundXdrOnTimeout = this._xdrOnTimeout.bind(this);
-
-	    /**
-	     * Emitted when the resource beings to load.
-	     *
-	     * @event start
-	     * @memberof Resource#
-	     */
-
-	    /**
-	     * Emitted each time progress of this resource load updates.
-	     * Not all resources types and loader systems can support this event
-	     * so sometimes it may not be available. If the resource
-	     * is being loaded on a modern browser, using XHR, and the remote server
-	     * properly sets Content-Length headers, then this will be available.
-	     *
-	     * @event progress
-	     * @memberof Resource#
-	     */
-
-	    /**
-	     * Emitted once this resource has loaded, if there was an error it will
-	     * be in the `error` property.
-	     *
-	     * @event complete
-	     * @memberof Resource#
-	     */
-	}
-
-	Resource.prototype = Object.create(EventEmitter.prototype);
-	Resource.prototype.constructor = Resource;
-	module.exports = Resource;
-
-	/**
-	 * Marks the resource as complete.
-	 *
-	 * @fires complete
-	 */
-	Resource.prototype.complete = function () {
-	    // TODO: Clean this up in a wrapper or something...gross....
-	    if (this.data && this.data.removeEventListener) {
-	        this.data.removeEventListener('error', this._boundOnError);
-	        this.data.removeEventListener('load', this._boundComplete);
-	        this.data.removeEventListener('progress', this._boundOnProgress);
-	        this.data.removeEventListener('canplaythrough', this._boundComplete);
-	    }
-
-	    if (this.xhr) {
-	        if (this.xhr.removeEventListener) {
-	            this.xhr.removeEventListener('error', this._boundXhrOnError);
-	            this.xhr.removeEventListener('abort', this._boundXhrOnAbort);
-	            this.xhr.removeEventListener('progress', this._boundOnProgress);
-	            this.xhr.removeEventListener('load', this._boundXhrOnLoad);
-	        }
-	        else {
-	            this.xhr.onerror = null;
-	            this.xhr.ontimeout = null;
-	            this.xhr.onprogress = null;
-	            this.xhr.onload = null;
-	        }
-	    }
-
-	    this.emit('complete', this);
-	};
-
-	/**
-	 * Kicks off loading of this resource.
-	 *
-	 * @fires start
-	 * @param [callback] {function} Optional callback to call once the resource is loaded.
-	 */
-	Resource.prototype.load = function (cb) {
-	    this.emit('start', this);
-
-	    // if a callback is set, listen for complete event
-	    if (cb) {
-	        this.once('complete', cb);
-	    }
-
-	    // if unset, determine the value
-	    if (this.crossOrigin === false || typeof this.crossOrigin !== 'string') {
-	        this.crossOrigin = this._determineCrossOrigin(this.url);
-	    }
-
-	    switch(this.loadType) {
-	        case Resource.LOAD_TYPE.IMAGE:
-	            this._loadImage();
-	            break;
-
-	        case Resource.LOAD_TYPE.AUDIO:
-	            this._loadElement('audio');
-	            break;
-
-	        case Resource.LOAD_TYPE.VIDEO:
-	            this._loadElement('video');
-	            break;
-
-	        case Resource.LOAD_TYPE.XHR:
-	            /* falls through */
-	        default:
-	            if (useXdr && this.crossOrigin) {
-	                this._loadXdr();
-	            }
-	            else {
-	                this._loadXhr();
-	            }
-	            break;
-	    }
-	};
-
-	/**
-	 * Loads this resources using an Image object.
-	 *
-	 * @private
-	 */
-	Resource.prototype._loadImage = function () {
-	    this.data = new Image();
-
-	    if (this.crossOrigin) {
-	        this.data.crossOrigin = this.crossOrigin;
-	    }
-
-	    this.data.src = this.url;
-
-	    this.isImage = true;
-
-	    this.data.addEventListener('error', this._boundOnError, false);
-	    this.data.addEventListener('load', this._boundComplete, false);
-	    this.data.addEventListener('progress', this._boundOnProgress, false);
-	};
-
-	/**
-	 * Loads this resources using an HTMLAudioElement or HTMLVideoElement.
-	 *
-	 * @private
-	 */
-	Resource.prototype._loadElement = function (type) {
-	    if (type === 'audio' && typeof Audio !== 'undefined') {
-	        this.data = new Audio();
-	    }
-	    else {
-	        this.data = document.createElement(type);
-	    }
-
-	    if (this.data === null) {
-	        this.error = new Error('Unsupported element ' + type);
-	        this.complete();
-	        return;
-	    }
-
-	    // support for CocoonJS Canvas+ runtime, lacks document.createElement('source')
-	    if (navigator.isCocoonJS) {
-	        this.data.src = Array.isArray(this.url) ? this.url[0] : this.url;
-	    }
-	    else {
-	        if (Array.isArray(this.url)) {
-	            for (var i = 0; i < this.url.length; ++i) {
-	                this.data.appendChild(this._createSource(type, this.url[i]));
-	            }
-	        }
-	        else {
-	            this.data.appendChild(this._createSource(type, this.url));
-	        }
-	    }
-
-	    this['is' + type[0].toUpperCase() + type.substring(1)] = true;
-
-	    this.data.addEventListener('error', this._boundOnError, false);
-	    this.data.addEventListener('load', this._boundComplete, false);
-	    this.data.addEventListener('progress', this._boundOnProgress, false);
-	    this.data.addEventListener('canplaythrough', this._boundComplete, false);
-
-	    this.data.load();
-	};
-
-	/**
-	 * Loads this resources using an XMLHttpRequest.
-	 *
-	 * @private
-	 */
-	Resource.prototype._loadXhr = function () {
-	    // if unset, determine the value
-	    if (typeof this.xhrType !== 'string') {
-	        this.xhrType = this._determineXhrType();
-	    }
-
-	    var xhr = this.xhr = new XMLHttpRequest();
-
-	    // set the request type and url
-	    xhr.open('GET', this.url, true);
-
-	    // load json as text and parse it ourselves. We do this because some browsers
-	    // *cough* safari *cough* can't deal with it.
-	    if (this.xhrType === Resource.XHR_RESPONSE_TYPE.JSON || this.xhrType === Resource.XHR_RESPONSE_TYPE.DOCUMENT) {
-	        xhr.responseType = Resource.XHR_RESPONSE_TYPE.TEXT;
-	    }
-	    else {
-	        xhr.responseType = this.xhrType;
-	    }
-
-	    xhr.addEventListener('error', this._boundXhrOnError, false);
-	    xhr.addEventListener('abort', this._boundXhrOnAbort, false);
-	    xhr.addEventListener('progress', this._boundOnProgress, false);
-	    xhr.addEventListener('load', this._boundXhrOnLoad, false);
-
-	    xhr.send();
-	};
-
-	/**
-	 * Loads this resources using an XDomainRequest. This is here because we need to support IE9 (gross).
-	 *
-	 * @private
-	 */
-	Resource.prototype._loadXdr = function () {
-	    // if unset, determine the value
-	    if (typeof this.xhrType !== 'string') {
-	        this.xhrType = this._determineXhrType();
-	    }
-
-	    var xdr = this.xhr = new XDomainRequest();
-
-	    // XDomainRequest has a few quirks. Occasionally it will abort requests
-	    // A way to avoid this is to make sure ALL callbacks are set even if not used
-	    // More info here: http://stackoverflow.com/questions/15786966/xdomainrequest-aborts-post-on-ie-9
-	    xdr.timeout = 5000;
-
-	    xdr.onerror = this._boundXhrOnError;
-	    xdr.ontimeout = this._boundXdrOnTimeout;
-	    xdr.onprogress = this._boundOnProgress;
-	    xdr.onload = this._boundXhrOnLoad;
-
-	    xdr.open('GET', this.url, true);
-
-	    //  Note: The xdr.send() call is wrapped in a timeout to prevent an issue with the interface where some requests are lost
-	    //  if multiple XDomainRequests are being sent at the same time.
-	    // Some info here: https://github.com/photonstorm/phaser/issues/1248
-	    setTimeout(function () {
-	        xdr.send();
-	    }, 0);
-	};
-
-	/**
-	 * Creates a source used in loading via an element.
-	 *
-	 * @param type {string} The element type (video or audio).
-	 * @param url {string} The source URL to load from.
-	 * @param [mime] {string} The mime type of the video
-	 * @private
-	 */
-	Resource.prototype._createSource = function (type, url, mime) {
-	    if (!mime) {
-	        mime = type + '/' + url.substr(url.lastIndexOf('.') + 1);
-	    }
-
-	    var source = document.createElement('source');
-
-	    source.src = url;
-	    source.type = mime;
-
-	    return source;
-	};
-
-	/**
-	 * Called if a load errors out.
-	 *
-	 * @param event {Event} The error event from the element that emits it.
-	 * @private
-	 */
-	Resource.prototype._onError = function (event) {
-	    this.error = new Error('Failed to load element using ' + event.target.nodeName);
-	    this.complete();
-	};
-
-	/**
-	 * Called if a load progress event fires for xhr/xdr.
-	 *
-	 * @fires progress
-	 * @param event {XMLHttpRequestProgressEvent|Event}
-	 * @private
-	 */
-	Resource.prototype._onProgress =  function (event) {
-	    if (event && event.lengthComputable) {
-	        this.emit('progress', this, event.loaded / event.total);
-	    }
-	};
-
-	/**
-	 * Called if an error event fires for xhr/xdr.
-	 *
-	 * @param event {XMLHttpRequestErrorEvent|Event}
-	 * @private
-	 */
-	Resource.prototype._xhrOnError = function () {
-	    this.error = new Error(
-	        reqType(this.xhr) + ' Request failed. ' +
-	        'Status: ' + this.xhr.status + ', text: "' + this.xhr.statusText + '"'
-	    );
-
-	    this.complete();
-	};
-
-	/**
-	 * Called if an abort event fires for xhr.
-	 *
-	 * @param event {XMLHttpRequestAbortEvent}
-	 * @private
-	 */
-	Resource.prototype._xhrOnAbort = function () {
-	    this.error = new Error(reqType(this.xhr) + ' Request was aborted by the user.');
-	    this.complete();
-	};
-
-	/**
-	 * Called if a timeout event fires for xdr.
-	 *
-	 * @param event {Event}
-	 * @private
-	 */
-	Resource.prototype._xdrOnTimeout = function () {
-	    this.error = new Error(reqType(this.xhr) + ' Request timed out.');
-	    this.complete();
-	};
-
-	/**
-	 * Called when data successfully loads from an xhr/xdr request.
-	 *
-	 * @param event {XMLHttpRequestLoadEvent|Event}
-	 * @private
-	 */
-	Resource.prototype._xhrOnLoad = function () {
-	    var xhr = this.xhr,
-	        status = xhr.status !== undefined ? xhr.status : 200; //XDR has no `.status`, assume 200.
-
-	    // status can be 0 when using the file:// protocol, also check if a response was found
-	    if (status === 200 || status === 204 || (status === 0 && xhr.responseText.length > 0)) {
-	        // if text, just return it
-	        if (this.xhrType === Resource.XHR_RESPONSE_TYPE.TEXT) {
-	            this.data = xhr.responseText;
-	        }
-	        // if json, parse into json object
-	        else if (this.xhrType === Resource.XHR_RESPONSE_TYPE.JSON) {
-	            try {
-	                this.data = JSON.parse(xhr.responseText);
-	                this.isJson = true;
-	            } catch(e) {
-	                this.error = new Error('Error trying to parse loaded json:', e);
-	            }
-	        }
-	        // if xml, parse into an xml document or div element
-	        else if (this.xhrType === Resource.XHR_RESPONSE_TYPE.DOCUMENT) {
-	            try {
-	                if (window.DOMParser) {
-	                    var domparser = new DOMParser();
-	                    this.data = domparser.parseFromString(xhr.responseText, 'text/xml');
-	                }
-	                else {
-	                    var div = document.createElement('div');
-	                    div.innerHTML = xhr.responseText;
-	                    this.data = div;
-	                }
-	                this.isXml = true;
-	            } catch (e) {
-	                this.error = new Error('Error trying to parse loaded xml:', e);
-	            }
-	        }
-	        // other types just return the response
-	        else {
-	            this.data = xhr.response || xhr.responseText;
-	        }
-	    }
-	    else {
-	        this.error = new Error('[' + xhr.status + ']' + xhr.statusText + ':' + xhr.responseURL);
-	    }
-
-	    this.complete();
-	};
-
-	function reqType(xhr) {
-	    return xhr.toString().replace('object ', '');
-	}
-
-	/**
-	 * Sets the `crossOrigin` property for this resource based on if the url
-	 * for this resource is cross-origin. If crossOrigin was manually set, this
-	 * function does nothing.
-	 *
-	 * @private
-	 * @param url {string} The url to test.
-	 * @param [location=window.location] {object} The location object to test against.
-	 * @return {string} The crossOrigin value to use (or empty string for none).
-	 */
-	Resource.prototype._determineCrossOrigin = function (url, loc) {
-	    // data: and javascript: urls are considered same-origin
-	    if (url.indexOf('data:') === 0) {
-	        return '';
-	    }
-
-	    // default is window.location
-	    loc = loc || window.location;
-
-	    if (!tempAnchor) {
-	        tempAnchor = document.createElement('a');
-	    }
-
-	    // let the browser determine the full href for the url of this resource and then
-	    // parse with the node url lib, we can't use the properties of the anchor element
-	    // because they don't work in IE9 :(
-	    tempAnchor.href = url;
-	    url = _url.parse(tempAnchor.href);
-
-	    var samePort = (!url.port && loc.port === '') || (url.port === loc.port);
-
-	    // if cross origin
-	    if (url.hostname !== loc.hostname || !samePort || url.protocol !== loc.protocol) {
-	        return 'anonymous';
-	    }
-
-	    return '';
-	};
-
-	/**
-	 * Determines the responseType of an XHR request based on the extension of the
-	 * resource being loaded.
-	 *
-	 * @private
-	 * @return {Resource.XHR_RESPONSE_TYPE} The responseType to use.
-	 */
-	Resource.prototype._determineXhrType = function () {
-	    return Resource._xhrTypeMap[this._getExtension()] || Resource.XHR_RESPONSE_TYPE.TEXT;
-	};
-
-	Resource.prototype._determineLoadType = function () {
-	    return Resource._loadTypeMap[this._getExtension()] || Resource.LOAD_TYPE.XHR;
-	};
-
-	Resource.prototype._getExtension = function () {
-	    var url = this.url,
-	        ext;
-
-	    if (this.isDataUrl) {
-	        var slashIndex = url.indexOf('/');
-	        ext = url.substring(slashIndex + 1, url.indexOf(';', slashIndex));
-	    }
-	    else {
-	        var queryStart = url.indexOf('?');
-	        if (queryStart !== -1) {
-	            url = url.substring(0, queryStart);
-	        }
-
-	        ext = url.substring(url.lastIndexOf('.') + 1);
-	    }
-
-	    return ext;
-	};
-
-	/**
-	 * Determines the mime type of an XHR request based on the responseType of
-	 * resource being loaded.
-	 *
-	 * @private
-	 * @return {string} The mime type to use.
-	 */
-	Resource.prototype._getMimeFromXhrType = function (type) {
-	    switch(type) {
-	        case Resource.XHR_RESPONSE_TYPE.BUFFER:
-	            return 'application/octet-binary';
-
-	        case Resource.XHR_RESPONSE_TYPE.BLOB:
-	            return 'application/blob';
-
-	        case Resource.XHR_RESPONSE_TYPE.DOCUMENT:
-	            return 'application/xml';
-
-	        case Resource.XHR_RESPONSE_TYPE.JSON:
-	            return 'application/json';
-
-	        case Resource.XHR_RESPONSE_TYPE.DEFAULT:
-	        case Resource.XHR_RESPONSE_TYPE.TEXT:
-	            /* falls through */
-	        default:
-	            return 'text/plain';
-
-	    }
-	};
-
-	/**
-	 * The types of loading a resource can use.
-	 *
-	 * @static
-	 * @constant
-	 * @property {object} LOAD_TYPE
-	 * @property {number} LOAD_TYPE.XHR - Uses XMLHttpRequest to load the resource.
-	 * @property {number} LOAD_TYPE.IMAGE - Uses an `Image` object to load the resource.
-	 * @property {number} LOAD_TYPE.AUDIO - Uses an `Audio` object to load the resource.
-	 * @property {number} LOAD_TYPE.VIDEO - Uses a `Video` object to load the resource.
-	 */
-	Resource.LOAD_TYPE = {
-	    XHR:    1,
-	    IMAGE:  2,
-	    AUDIO:  3,
-	    VIDEO:  4
-	};
-
-	/**
-	 * The XHR ready states, used internally.
-	 *
-	 * @static
-	 * @constant
-	 * @property {object} XHR_READY_STATE
-	 * @property {number} XHR_READY_STATE.UNSENT - open()has not been called yet.
-	 * @property {number} XHR_READY_STATE.OPENED - send()has not been called yet.
-	 * @property {number} XHR_READY_STATE.HEADERS_RECEIVED - send() has been called, and headers and status are available.
-	 * @property {number} XHR_READY_STATE.LOADING - Downloading; responseText holds partial data.
-	 * @property {number} XHR_READY_STATE.DONE - The operation is complete.
-	 */
-	Resource.XHR_READY_STATE = {
-	    UNSENT: 0,
-	    OPENED: 1,
-	    HEADERS_RECEIVED: 2,
-	    LOADING: 3,
-	    DONE: 4
-	};
-
-	/**
-	 * The XHR ready states, used internally.
-	 *
-	 * @static
-	 * @constant
-	 * @property {object} XHR_RESPONSE_TYPE
-	 * @property {string} XHR_RESPONSE_TYPE.DEFAULT - defaults to text
-	 * @property {string} XHR_RESPONSE_TYPE.BUFFER - ArrayBuffer
-	 * @property {string} XHR_RESPONSE_TYPE.BLOB - Blob
-	 * @property {string} XHR_RESPONSE_TYPE.DOCUMENT - Document
-	 * @property {string} XHR_RESPONSE_TYPE.JSON - Object
-	 * @property {string} XHR_RESPONSE_TYPE.TEXT - String
-	 */
-	Resource.XHR_RESPONSE_TYPE = {
-	    DEFAULT:    'text',
-	    BUFFER:     'arraybuffer',
-	    BLOB:       'blob',
-	    DOCUMENT:   'document',
-	    JSON:       'json',
-	    TEXT:       'text'
-	};
-
-	Resource._loadTypeMap = {
-	    'gif':      Resource.LOAD_TYPE.IMAGE,
-	    'png':      Resource.LOAD_TYPE.IMAGE,
-	    'bmp':      Resource.LOAD_TYPE.IMAGE,
-	    'jpg':      Resource.LOAD_TYPE.IMAGE,
-	    'jpeg':     Resource.LOAD_TYPE.IMAGE,
-	    'tif':      Resource.LOAD_TYPE.IMAGE,
-	    'tiff':     Resource.LOAD_TYPE.IMAGE,
-	    'webp':     Resource.LOAD_TYPE.IMAGE,
-	    'tga':      Resource.LOAD_TYPE.IMAGE
-	};
-
-	Resource._xhrTypeMap = {
-	    // xml
-	    'xhtml':    Resource.XHR_RESPONSE_TYPE.DOCUMENT,
-	    'html':     Resource.XHR_RESPONSE_TYPE.DOCUMENT,
-	    'htm':      Resource.XHR_RESPONSE_TYPE.DOCUMENT,
-	    'xml':      Resource.XHR_RESPONSE_TYPE.DOCUMENT,
-	    'tmx':      Resource.XHR_RESPONSE_TYPE.DOCUMENT,
-	    'tsx':      Resource.XHR_RESPONSE_TYPE.DOCUMENT,
-	    'svg':      Resource.XHR_RESPONSE_TYPE.DOCUMENT,
-
-	    // images
-	    'gif':      Resource.XHR_RESPONSE_TYPE.BLOB,
-	    'png':      Resource.XHR_RESPONSE_TYPE.BLOB,
-	    'bmp':      Resource.XHR_RESPONSE_TYPE.BLOB,
-	    'jpg':      Resource.XHR_RESPONSE_TYPE.BLOB,
-	    'jpeg':     Resource.XHR_RESPONSE_TYPE.BLOB,
-	    'tif':      Resource.XHR_RESPONSE_TYPE.BLOB,
-	    'tiff':     Resource.XHR_RESPONSE_TYPE.BLOB,
-	    'webp':     Resource.XHR_RESPONSE_TYPE.BLOB,
-	    'tga':      Resource.XHR_RESPONSE_TYPE.BLOB,
-
-	    // json
-	    'json':     Resource.XHR_RESPONSE_TYPE.JSON,
-
-	    // text
-	    'text':     Resource.XHR_RESPONSE_TYPE.TEXT,
-	    'txt':      Resource.XHR_RESPONSE_TYPE.TEXT
-	};
-
-	/**
-	 * Sets the load type to be used for a specific extension.
-	 *
-	 * @static
-	 * @param extname {string} The extension to set the type for, e.g. "png" or "fnt"
-	 * @param loadType {Resource.LOAD_TYPE} The load type to set it to.
-	 */
-	Resource.setExtensionLoadType = function (extname, loadType) {
-	    setExtMap(Resource._loadTypeMap, extname, loadType);
-	};
-
-	/**
-	 * Sets the load type to be used for a specific extension.
-	 *
-	 * @static
-	 * @param extname {string} The extension to set the type for, e.g. "png" or "fnt"
-	 * @param xhrType {Resource.XHR_RESPONSE_TYPE} The xhr type to set it to.
-	 */
-	Resource.setExtensionXhrType = function (extname, xhrType) {
-	    setExtMap(Resource._xhrTypeMap, extname, xhrType);
-	};
-
-	function setExtMap(map, extname, val) {
-	    if (extname && extname.indexOf('.') === 0) {
-	        extname = extname.substring(1);
-	    }
-
-	    if (!extname) {
-	        return;
-	    }
-
-	    map[extname] = val;
-	}
-
-	},{"eventemitter3":129,"url":8}],132:[function(require,module,exports){
-	module.exports = {
-
-	    // private property
-	    _keyStr: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=",
-
-	    encodeBinary: function (input) {
-	        var output = "";
-	        var bytebuffer;
-	        var encodedCharIndexes = new Array(4);
-	        var inx = 0;
-	        var jnx = 0;
-	        var paddingBytes = 0;
-
-	        while (inx < input.length) {
-	            // Fill byte buffer array
-	            bytebuffer = new Array(3);
-	            for (jnx = 0; jnx < bytebuffer.length; jnx++) {
-	                if (inx < input.length) {
-	                    // throw away high-order byte, as documented at:
-	                    // https://developer.mozilla.org/En/Using_XMLHttpRequest#Handling_binary_data
-	                    bytebuffer[jnx] = input.charCodeAt(inx++) & 0xff;
-	                }
-	                else {
-	                    bytebuffer[jnx] = 0;
-	                }
-	            }
-
-	            // Get each encoded character, 6 bits at a time
-	            // index 1: first 6 bits
-	            encodedCharIndexes[0] = bytebuffer[0] >> 2;
-	            // index 2: second 6 bits (2 least significant bits from input byte 1 + 4 most significant bits from byte 2)
-	            encodedCharIndexes[1] = ((bytebuffer[0] & 0x3) << 4) | (bytebuffer[1] >> 4);
-	            // index 3: third 6 bits (4 least significant bits from input byte 2 + 2 most significant bits from byte 3)
-	            encodedCharIndexes[2] = ((bytebuffer[1] & 0x0f) << 2) | (bytebuffer[2] >> 6);
-	            // index 3: forth 6 bits (6 least significant bits from input byte 3)
-	            encodedCharIndexes[3] = bytebuffer[2] & 0x3f;
-
-	            // Determine whether padding happened, and adjust accordingly
-	            paddingBytes = inx - (input.length - 1);
-	            switch (paddingBytes) {
-	                case 2:
-	                    // Set last 2 characters to padding char
-	                    encodedCharIndexes[3] = 64;
-	                    encodedCharIndexes[2] = 64;
-	                    break;
-
-	                case 1:
-	                    // Set last character to padding char
-	                    encodedCharIndexes[3] = 64;
-	                    break;
-
-	                default:
-	                    break; // No padding - proceed
-	            }
-
-	            // Now we will grab each appropriate character out of our keystring
-	            // based on our index array and append it to the output string
-	            for (jnx = 0; jnx < encodedCharIndexes.length; jnx++) {
-	                output += this._keyStr.charAt(encodedCharIndexes[jnx]);
-	            }
-	        }
-	        return output;
-	    }
-	};
-
-	},{}],133:[function(require,module,exports){
-	module.exports = require('./Loader');
-
-	module.exports.Resource = require('./Resource');
-
-	module.exports.middleware = {
-	    caching: {
-	        memory: require('./middlewares/caching/memory')
-	    },
-	    parsing: {
-	        blob: require('./middlewares/parsing/blob')
-	    }
-	};
-
-	},{"./Loader":130,"./Resource":131,"./middlewares/caching/memory":134,"./middlewares/parsing/blob":135}],134:[function(require,module,exports){
-	// a simple in-memory cache for resources
-	var cache = {};
-
-	module.exports = function () {
-	    return function (resource, next) {
-	        // if cached, then set data and complete the resource
-	        if (cache[resource.url]) {
-	            resource.data = cache[resource.url];
-	            resource.complete();
-	        }
-	        // if not cached, wait for complete and store it in the cache.
-	        else {
-	            resource.once('complete', function () {
-	               cache[this.url] = this.data;
-	            });
-	        }
-	        
-	        next();
-	    };
-	};
-
-	},{}],135:[function(require,module,exports){
-	var Resource = require('../../Resource'),
-	    b64 = require('../../b64');
-
-	window.URL = window.URL || window.webkitURL;
-
-	// a middleware for transforming XHR loaded Blobs into more useful objects
-
-	module.exports = function () {
-	    return function (resource, next) {
-	        if (!resource.data) {
-	            return next();
-	        }
-
-	        // if this was an XHR load of a blob
-	        if (resource.xhr && resource.xhrType === Resource.XHR_RESPONSE_TYPE.BLOB) {
-	            // if there is no blob support we probably got a binary string back
-	            if (!window.Blob || typeof resource.data === 'string') {
-	                var type = resource.xhr.getResponseHeader('content-type');
-
-	                // this is an image, convert the binary string into a data url
-	                if (type && type.indexOf('image') === 0) {
-	                    resource.data = new Image();
-	                    resource.data.src = 'data:' + type + ';base64,' + b64.encodeBinary(resource.xhr.responseText);
-
-	                    resource.isImage = true;
-
-	                    // wait until the image loads and then callback
-	                    resource.data.onload = function () {
-	                        resource.data.onload = null;
-
-	                        next();
-	                    };
-	                }
-	            }
-	            // if content type says this is an image, then we should transform the blob into an Image object
-	            else if (resource.data.type.indexOf('image') === 0) {
-	                var src = URL.createObjectURL(resource.data);
-
-	                resource.blob = resource.data;
-	                resource.data = new Image();
-	                resource.data.src = src;
-
-	                resource.isImage = true;
-
-	                // cleanup the no longer used blob after the image loads
-	                resource.data.onload = function () {
-	                    URL.revokeObjectURL(src);
-	                    resource.data.onload = null;
-
-	                    next();
-	                };
-	            }
-	        }
-	        else {
-	            next();
-	        }
-	    };
-	};
-
-	},{"../../Resource":131,"../../b64":132}]},{},[108])(108)
+	},{}]},{},[115])(115)
 	});
-
-
 	//# sourceMappingURL=pixi.js.map
+
 	/* WEBPACK VAR INJECTION */}.call(exports, (function() { return this; }()), __webpack_require__(77).setImmediate))
 
 /***/ },
@@ -38836,2602 +39086,3077 @@
 /* 78 */
 /***/ function(module, exports, __webpack_require__) {
 
-	"use strict";
+	var __WEBPACK_AMD_DEFINE_FACTORY__, __WEBPACK_AMD_DEFINE_ARRAY__, __WEBPACK_AMD_DEFINE_RESULT__;/* WEBPACK VAR INJECTION */(function(module) {'use strict';
 
-	Object.defineProperty(exports, "__esModule", {
-		value: true
-	});
+	var _typeof = typeof Symbol === "function" && typeof Symbol.iterator === "symbol" ? function (obj) { return typeof obj; } : function (obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol ? "symbol" : typeof obj; };
 
-	var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
-
-	var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
-
-	function _toConsumableArray(arr) { if (Array.isArray(arr)) { for (var i = 0, arr2 = Array(arr.length); i < arr.length; i++) arr2[i] = arr[i]; return arr2; } else { return Array.from(arr); } }
-
-	function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
-
-	var _timeline = __webpack_require__(79);
-
-	var _DEFAULT_OPTIONS = {
-		timeline: null,
-		frameWidth: null,
-		frameHeight: null,
-		identifier: "",
-		fps: 60,
-		draw: function draw(ctx, timelineState) {}
-	};
-
-	var _SHEET_DIMENSIONS = [128, 256, 512, 1024, 2048];
-
-	var singleton = Symbol();
-	var singletonEnforcer = Symbol();
-
-	var SpriteSheetBuilder = (function () {
-		_createClass(SpriteSheetBuilder, null, [{
-			key: "instance",
-			get: function get() {
-				if (!this[singleton]) {
-					this[singleton] = new SpriteSheetBuilder(singletonEnforcer);
-
-					this[singleton]._init();
-				}
-
-				return this[singleton];
+	(function webpackUniversalModuleDefinition(root, factory) {
+		if (( false ? 'undefined' : _typeof(exports)) === 'object' && ( false ? 'undefined' : _typeof(module)) === 'object') module.exports = factory();else if (true) !(__WEBPACK_AMD_DEFINE_ARRAY__ = [], __WEBPACK_AMD_DEFINE_FACTORY__ = (factory), __WEBPACK_AMD_DEFINE_RESULT__ = (typeof __WEBPACK_AMD_DEFINE_FACTORY__ === 'function' ? (__WEBPACK_AMD_DEFINE_FACTORY__.apply(exports, __WEBPACK_AMD_DEFINE_ARRAY__)) : __WEBPACK_AMD_DEFINE_FACTORY__), __WEBPACK_AMD_DEFINE_RESULT__ !== undefined && (module.exports = __WEBPACK_AMD_DEFINE_RESULT__));else {
+			var a = factory();
+			for (var i in a) {
+				((typeof exports === 'undefined' ? 'undefined' : _typeof(exports)) === 'object' ? exports : root)[i] = a[i];
 			}
-		}]);
-
-		function SpriteSheetBuilder(enforcer) {
-			_classCallCheck(this, SpriteSheetBuilder);
-
-			this._canvasBuffers = [];
-			this._frameLength = 0;
-			this._sheetData = [];
-			this._sheetIndex = -1;
-			this._sheetTimeline = null;
-
-			if (enforcer != singletonEnforcer) throw new Exception("Cannot construct singleton");
 		}
+	})(undefined, function () {
+		return (/******/function (modules) {
+				// webpackBootstrap
+				/******/ // The module cache
+				/******/var installedModules = {};
 
-		/*_______________________________________________
-	 	PUBLIC
-	 _______________________________________________*/
+				/******/ // The require function
+				/******/function __webpack_require__(moduleId) {
 
-		_createClass(SpriteSheetBuilder, [{
-			key: "build",
-			value: function build(options) {
-				this._build(options);
-			}
-		}, {
-			key: "getSpriteSheetJSONData",
-			value: function getSpriteSheetJSONData() {
-				return this._sheetData;
-			}
-		}, {
-			key: "getSpriteSheetImageData",
-			value: function getSpriteSheetImageData() {
-				return this._getSpriteSheetImageData();
-			}
-		}, {
-			key: "getSpriteSheetTimeline",
-			value: function getSpriteSheetTimeline() {
-				return this._sheetTimeline;
-			}
-		}, {
-			key: "getSpriteSheetCanvas",
-			value: function getSpriteSheetCanvas() {
-				return this._getSpriteSheetCanvas();
-			}
-		}, {
-			key: "_init",
+					/******/ // Check if module is in cache
+					/******/if (installedModules[moduleId])
+						/******/return installedModules[moduleId].exports;
 
-			/*_______________________________________________
-	  	PRIVATE
-	  _______________________________________________*/
+					/******/ // Create a new module (and put it into the cache)
+					/******/var module = installedModules[moduleId] = {
+						/******/exports: {},
+						/******/id: moduleId,
+						/******/loaded: false
+						/******/ };
 
-			value: function _init() {}
-		}, {
-			key: "_build",
-			value: function _build(options) {
+					/******/ // Execute the module function
+					/******/modules[moduleId].call(module.exports, module, module.exports, __webpack_require__);
 
-				this._options = _extends({}, _DEFAULT_OPTIONS, options);
+					/******/ // Flag the module as loaded
+					/******/module.loaded = true;
 
-				// clear and reset ready to rebuild
-				this._clearBuffers();
-
-				// compile the json data beforehand, calculate the sheets needed
-				this._initiateMetrics();
-
-				// create a timeline with the frames coords set as keyframe, ready for a sprite to read
-				this._compileTimeline();
-
-				// call the draw function for every frame
-				this._executeDraw();
-			}
-		}, {
-			key: "_initiateMetrics",
-			value: function _initiateMetrics() {
-				// frameLength will always equal or less timelime
-				this._frameLength = Math.floor(this._options.timeline.duration / (1000 / this._options.fps));
-
-				this._sheetData = this._determinMinimumSheetSize(this._frameLength);
-
-				for (var sheetIndex in this._sheetData) {
-					if (sheetIndex >= this._canvasBuffers.length) {
-						var canvas = document.createElement("canvas");
-						canvas.width = _SHEET_DIMENSIONS[_SHEET_DIMENSIONS.length - 1];
-						canvas.height = _SHEET_DIMENSIONS[_SHEET_DIMENSIONS.length - 1];
-
-						this._canvasBuffers.push(canvas);
-					}
+					/******/ // Return the exports of the module
+					/******/return module.exports;
+					/******/
 				}
-			}
-		}, {
-			key: "_compileTimeline",
-			value: function _compileTimeline() {
-				var frameIndex = 0;
-				var sheetIndex = 0;
-				var frame = undefined,
-				    time = undefined;
 
-				var propertyKeyframes = {
-					frame: []
+				/******/ // expose the modules object (__webpack_modules__)
+				/******/__webpack_require__.m = modules;
+
+				/******/ // expose the module cache
+				/******/__webpack_require__.c = installedModules;
+
+				/******/ // __webpack_public_path__
+				/******/__webpack_require__.p = "";
+
+				/******/ // Load entry module and return exports
+				/******/return __webpack_require__(0);
+				/******/
+			}(
+			/************************************************************************/
+			/******/[
+			/* 0 */
+			/***/function (module, exports, __webpack_require__) {
+
+				"use strict";
+
+				Object.defineProperty(exports, "__esModule", {
+					value: true
+				});
+
+				var _extends = Object.assign || function (target) {
+					for (var i = 1; i < arguments.length; i++) {
+						var source = arguments[i];for (var key in source) {
+							if (Object.prototype.hasOwnProperty.call(source, key)) {
+								target[key] = source[key];
+							}
+						}
+					}return target;
 				};
 
-				var frames = propertyKeyframes.frame;
+				var _createClass = function () {
+					function defineProperties(target, props) {
+						for (var i = 0; i < props.length; i++) {
+							var descriptor = props[i];descriptor.enumerable = descriptor.enumerable || false;descriptor.configurable = true;if ("value" in descriptor) descriptor.writable = true;Object.defineProperty(target, descriptor.key, descriptor);
+						}
+					}return function (Constructor, protoProps, staticProps) {
+						if (protoProps) defineProperties(Constructor.prototype, protoProps);if (staticProps) defineProperties(Constructor, staticProps);return Constructor;
+					};
+				}();
 
-				var _iteratorNormalCompletion = true;
-				var _didIteratorError = false;
-				var _iteratorError = undefined;
+				var _timeline = __webpack_require__(1);
 
-				try {
-					for (var _iterator = this._sheetData[Symbol.iterator](), _step; !(_iteratorNormalCompletion = (_step = _iterator.next()).done); _iteratorNormalCompletion = true) {
-						var sheet = _step.value;
-						var _iteratorNormalCompletion2 = true;
-						var _didIteratorError2 = false;
-						var _iteratorError2 = undefined;
+				function _toConsumableArray(arr) {
+					if (Array.isArray(arr)) {
+						for (var i = 0, arr2 = Array(arr.length); i < arr.length; i++) {
+							arr2[i] = arr[i];
+						}return arr2;
+					} else {
+						return Array.from(arr);
+					}
+				}
 
-						try {
-							for (var _iterator2 = Object.keys(sheet.frames)[Symbol.iterator](), _step2; !(_iteratorNormalCompletion2 = (_step2 = _iterator2.next()).done); _iteratorNormalCompletion2 = true) {
-								var frameKey = _step2.value;
+				function _classCallCheck(instance, Constructor) {
+					if (!(instance instanceof Constructor)) {
+						throw new TypeError("Cannot call a class as a function");
+					}
+				}
 
-								time = frameIndex * (1000 / this._options.fps);
-								frame = sheet.frames[frameKey].frame;
+				var _DEFAULT_OPTIONS = {
+					timeline: null,
+					frameWidth: null,
+					frameHeight: null,
+					identifier: "",
+					fps: 60,
+					draw: function draw(ctx, timelineState) {}
+				};
 
-								frames.push({
-									value: frame.x + "," + frame.y + "," + frame.w + "," + frame.h,
-									time: time,
-									hold: true
-								});
+				var _SHEET_DIMENSIONS = [128, 256, 512, 1024, 2048];
 
-								frameIndex += 1;
+				var singleton = Symbol();
+				var singletonEnforcer = Symbol();
+
+				var SpriteSheetBuilder = function () {
+					_createClass(SpriteSheetBuilder, null, [{
+						key: "instance",
+						get: function get() {
+							if (!this[singleton]) {
+								this[singleton] = new SpriteSheetBuilder(singletonEnforcer);
+
+								this[singleton]._init();
 							}
-						} catch (err) {
-							_didIteratorError2 = true;
-							_iteratorError2 = err;
-						} finally {
+
+							return this[singleton];
+						}
+					}]);
+
+					function SpriteSheetBuilder(enforcer) {
+						_classCallCheck(this, SpriteSheetBuilder);
+
+						this._canvasBuffers = [];
+						this._frameLength = 0;
+						this._sheetData = [];
+						this._sheetIndex = -1;
+						this._sheetTimeline = null;
+
+						if (enforcer != singletonEnforcer) throw new Exception("Cannot construct singleton");
+					}
+
+					/*_______________________________________________
+	    	PUBLIC
+	    _______________________________________________*/
+
+					_createClass(SpriteSheetBuilder, [{
+						key: "build",
+						value: function build(options) {
+							this._build(options);
+						}
+					}, {
+						key: "getSpriteSheetJSONData",
+						value: function getSpriteSheetJSONData() {
+							return this._sheetData;
+						}
+					}, {
+						key: "getSpriteSheetImageData",
+						value: function getSpriteSheetImageData() {
+							return this._getSpriteSheetImageData();
+						}
+					}, {
+						key: "getSpriteSheetTimeline",
+						value: function getSpriteSheetTimeline() {
+							return this._sheetTimeline;
+						}
+					}, {
+						key: "getSpriteSheetCanvas",
+						value: function getSpriteSheetCanvas() {
+							return this._getSpriteSheetCanvas();
+						}
+					}, {
+						key: "_init",
+
+						/*_______________________________________________
+	     	PRIVATE
+	     _______________________________________________*/
+
+						value: function _init() {}
+					}, {
+						key: "_build",
+						value: function _build(options) {
+
+							this._options = _extends({}, _DEFAULT_OPTIONS, options);
+
+							// clear and reset ready to rebuild
+							this._clearBuffers();
+
+							// compile the json data beforehand, calculate the sheets needed
+							this._initiateMetrics();
+
+							// create a timeline with the frames coords set as keyframe, ready for a sprite to read
+							this._compileTimeline();
+
+							// call the draw function for every frame
+							this._executeDraw();
+						}
+					}, {
+						key: "_initiateMetrics",
+						value: function _initiateMetrics() {
+							// frameLength will always equal or less timelime
+							this._frameLength = Math.floor(this._options.timeline.duration / (1000 / this._options.fps));
+
+							this._sheetData = this._determinMinimumSheetSize(this._frameLength);
+
+							for (var sheetIndex in this._sheetData) {
+								if (sheetIndex >= this._canvasBuffers.length) {
+									var canvas = document.createElement("canvas");
+									canvas.width = _SHEET_DIMENSIONS[_SHEET_DIMENSIONS.length - 1];
+									canvas.height = _SHEET_DIMENSIONS[_SHEET_DIMENSIONS.length - 1];
+
+									this._canvasBuffers.push(canvas);
+								}
+							}
+						}
+					}, {
+						key: "_compileTimeline",
+						value: function _compileTimeline() {
+							var frameIndex = 0;
+							var sheetIndex = 0;
+							var frame = void 0,
+							    time = void 0;
+
+							var propertyKeyframes = {
+								frame: []
+							};
+
+							var frames = propertyKeyframes.frame;
+
+							var _iteratorNormalCompletion = true;
+							var _didIteratorError = false;
+							var _iteratorError = undefined;
+
 							try {
-								if (!_iteratorNormalCompletion2 && _iterator2["return"]) {
-									_iterator2["return"]();
+								for (var _iterator = this._sheetData[Symbol.iterator](), _step; !(_iteratorNormalCompletion = (_step = _iterator.next()).done); _iteratorNormalCompletion = true) {
+									var sheet = _step.value;
+									var _iteratorNormalCompletion2 = true;
+									var _didIteratorError2 = false;
+									var _iteratorError2 = undefined;
+
+									try {
+										for (var _iterator2 = Object.keys(sheet.frames)[Symbol.iterator](), _step2; !(_iteratorNormalCompletion2 = (_step2 = _iterator2.next()).done); _iteratorNormalCompletion2 = true) {
+											var frameKey = _step2.value;
+
+											time = frameIndex * (1000 / this._options.fps);
+											frame = sheet.frames[frameKey].frame;
+
+											frames.push({
+												value: frame.x + "," + frame.y + "," + frame.w + "," + frame.h,
+												time: time,
+												hold: true
+											});
+
+											frameIndex += 1;
+										}
+									} catch (err) {
+										_didIteratorError2 = true;
+										_iteratorError2 = err;
+									} finally {
+										try {
+											if (!_iteratorNormalCompletion2 && _iterator2.return) {
+												_iterator2.return();
+											}
+										} finally {
+											if (_didIteratorError2) {
+												throw _iteratorError2;
+											}
+										}
+									}
+
+									sheetIndex += 1;
 								}
+
+								// const tween = new Tween(propertyKeyframes, `frames`, { loop: false, fillMode: 0 });
+							} catch (err) {
+								_didIteratorError = true;
+								_iteratorError = err;
 							} finally {
-								if (_didIteratorError2) {
-									throw _iteratorError2;
+								try {
+									if (!_iteratorNormalCompletion && _iterator.return) {
+										_iterator.return();
+									}
+								} finally {
+									if (_didIteratorError) {
+										throw _iteratorError;
+									}
 								}
 							}
+
+							var tween = new _timeline.Tween("frames");
+							tween.addKeyframes(propertyKeyframes);
+
+							this._sheetTimeline = new _timeline.InteractiveTimeline("sprite-sheet-timeline");
+							this._sheetTimeline.addChild(tween, { loop: false, fillMode: "both" });
+
+							var sequences = this._options.timeline.getSequences();
+							if (sequences.length > 0) {
+								this._sheetTimeline.setSequences([].concat(_toConsumableArray(sequences)));
+							}
 						}
+					}, {
+						key: "_determinMinimumSheetSize",
+						value: function _determinMinimumSheetSize(length) {
+							var sheetIndex = arguments.length <= 1 || arguments[1] === undefined ? 0 : arguments[1];
 
-						sheetIndex += 1;
-					}
+							var maxCells = void 0;
+							var sheetData = [];
+							var data = void 0;
+							var dimension = void 0;
+							// @TODO we need to be able to use non square sheets
+							var _iteratorNormalCompletion3 = true;
+							var _didIteratorError3 = false;
+							var _iteratorError3 = undefined;
 
-					// const tween = new Tween(propertyKeyframes, `frames`, { loop: false, fillMode: 0 });
-				} catch (err) {
-					_didIteratorError = true;
-					_iteratorError = err;
-				} finally {
-					try {
-						if (!_iteratorNormalCompletion && _iterator["return"]) {
-							_iterator["return"]();
-						}
-					} finally {
-						if (_didIteratorError) {
-							throw _iteratorError;
-						}
-					}
-				}
+							try {
+								for (var _iterator3 = _SHEET_DIMENSIONS[Symbol.iterator](), _step3; !(_iteratorNormalCompletion3 = (_step3 = _iterator3.next()).done); _iteratorNormalCompletion3 = true) {
+									dimension = _step3.value;
 
-				var tween = new _timeline.Tween("frames");
-				tween.addKeyframes(propertyKeyframes);
+									maxCells = this._getSheetMaxCells(dimension);
+									if (length <= maxCells) {
+										break;
+									}
+								}
+							} catch (err) {
+								_didIteratorError3 = true;
+								_iteratorError3 = err;
+							} finally {
+								try {
+									if (!_iteratorNormalCompletion3 && _iterator3.return) {
+										_iterator3.return();
+									}
+								} finally {
+									if (_didIteratorError3) {
+										throw _iteratorError3;
+									}
+								}
+							}
 
-				this._sheetTimeline = new _timeline.InteractiveTimeline("sprite-sheet-timeline");
-				this._sheetTimeline.addChild(tween, { loop: false, fillMode: "both" });
+							if (length <= maxCells) {
+								data = this._composeSheetData(dimension, length, sheetIndex);
+								sheetData.push(data);
+							} else {
 
-				var sequences = this._options.timeline.getSequences();
-				if (sequences.length > 0) {
-					this._sheetTimeline.setSequences([].concat(_toConsumableArray(sequences)));
-				}
-			}
-		}, {
-			key: "_determinMinimumSheetSize",
-			value: function _determinMinimumSheetSize(length) {
-				var sheetIndex = arguments.length <= 1 || arguments[1] === undefined ? 0 : arguments[1];
+								maxCells = this._getSheetMaxCells();
 
-				var maxCells = undefined;
-				var sheetData = [];
-				var data = undefined;
-				var dimension = undefined;
-				// @TODO we need to be able to use non square sheets
-				var _iteratorNormalCompletion3 = true;
-				var _didIteratorError3 = false;
-				var _iteratorError3 = undefined;
+								data = this._composeSheetData(dimension, maxCells, sheetIndex);
+								sheetData.push(data);
 
-				try {
-					for (var _iterator3 = _SHEET_DIMENSIONS[Symbol.iterator](), _step3; !(_iteratorNormalCompletion3 = (_step3 = _iterator3.next()).done); _iteratorNormalCompletion3 = true) {
-						dimension = _step3.value;
+								length %= maxCells;
+								sheetData.concat(this._determinMinimumSheetSize(length), sheetIndex + 1);
+							}
 
-						maxCells = this._getSheetMaxCells(dimension);
-						if (length <= maxCells) {
-							break;
-						}
-					}
-				} catch (err) {
-					_didIteratorError3 = true;
-					_iteratorError3 = err;
-				} finally {
-					try {
-						if (!_iteratorNormalCompletion3 && _iterator3["return"]) {
-							_iterator3["return"]();
-						}
-					} finally {
-						if (_didIteratorError3) {
-							throw _iteratorError3;
-						}
-					}
-				}
-
-				if (length <= maxCells) {
-					data = this._composeSheetData(dimension, length, sheetIndex);
-					sheetData.push(data);
-				} else {
-
-					maxCells = this._getSheetMaxCells();
-
-					data = this._composeSheetData(dimension, maxCells, sheetIndex);
-					sheetData.push(data);
-
-					length %= maxCells;
-					sheetData.concat(this._determinMinimumSheetSize(length), sheetIndex + 1);
-				}
-
-				return sheetData;
-			}
-		}, {
-			key: "_composeSheetData",
-			value: function _composeSheetData(dimension, frameLength, sheetIndex) {
-				var frameData = undefined;
-
-				var frameIndex = sheetIndex * this._getSheetMaxCells();
-				var maxIndex = frameIndex + frameLength;
-				var maxRows = Math.floor(dimension / this._options.frameHeight);
-				var maxCols = Math.floor(dimension / this._options.frameWidth);
-				var x = undefined,
-				    y = undefined;
-				var sheetData = {
-					"frames": {},
-					"meta": {
-						"format": "RGBA8888",
-						"size": {
-							"w": dimension,
-							"h": dimension
-						},
-						"scale": "1"
-					}
-				};
-
-				for (var rowIndex = 0; rowIndex < maxRows; rowIndex++) {
-					for (var colIndex = 0; colIndex < maxCols; colIndex++) {
-
-						x = colIndex * this._options.frameWidth;
-						y = rowIndex * this._options.frameHeight;
-
-						sheetData.frames["" + this._options.identifier + frameIndex] = {
-							"frame": { "x": x, "y": y, "w": this._options.frameWidth, "h": this._options.frameHeight },
-							"rotated": false,
-							"trimmed": false,
-							"spriteSourceSize": { "x": 0, "y": 0, "w": this._options.frameWidth, "h": this._options.frameHeight },
-							"sourceSize": { "w": this._options.frameWidth, "h": this._options.frameHeight },
-							"pivot": { "x": 0.5, "y": 0.5 }
-						};
-
-						frameIndex += 1;
-
-						if (frameIndex > maxIndex) {
 							return sheetData;
 						}
-					}
-				}
+					}, {
+						key: "_composeSheetData",
+						value: function _composeSheetData(dimension, frameLength, sheetIndex) {
+							var frameData = void 0;
 
-				return sheetData;
-			}
-		}, {
-			key: "_getSheetMaxCells",
-			value: function _getSheetMaxCells(dimension) {
-				if (dimension == null) {
-					dimension = _SHEET_DIMENSIONS[_SHEET_DIMENSIONS.length - 1];
-				}
-				return Math.floor(dimension / this._options.frameWidth) * Math.floor(dimension / this._options.frameHeight);
-			}
-		}, {
-			key: "_executeDraw",
-			value: function _executeDraw() {
-				var ctx = undefined,
-				    time = undefined,
-				    frameData = undefined;
-				var frameIndex = 0;
-				var sheetIndex = 0;
+							var frameIndex = sheetIndex * this._getSheetMaxCells();
+							var maxIndex = frameIndex + frameLength;
+							var maxRows = Math.floor(dimension / this._options.frameHeight);
+							var maxCols = Math.floor(dimension / this._options.frameWidth);
+							var x = void 0,
+							    y = void 0;
+							var sheetData = {
+								"frames": {},
+								"meta": {
+									"format": "RGBA8888",
+									"size": {
+										"w": dimension,
+										"h": dimension
+									},
+									"scale": "1"
+								}
+							};
 
-				var _iteratorNormalCompletion4 = true;
-				var _didIteratorError4 = false;
-				var _iteratorError4 = undefined;
+							for (var rowIndex = 0; rowIndex < maxRows; rowIndex++) {
+								for (var colIndex = 0; colIndex < maxCols; colIndex++) {
 
-				try {
-					for (var _iterator4 = this._sheetData[Symbol.iterator](), _step4; !(_iteratorNormalCompletion4 = (_step4 = _iterator4.next()).done); _iteratorNormalCompletion4 = true) {
-						var sheet = _step4.value;
-						var _iteratorNormalCompletion5 = true;
-						var _didIteratorError5 = false;
-						var _iteratorError5 = undefined;
+									x = colIndex * this._options.frameWidth;
+									y = rowIndex * this._options.frameHeight;
 
-						try {
-							for (var _iterator5 = Object.keys(sheet.frames)[Symbol.iterator](), _step5; !(_iteratorNormalCompletion5 = (_step5 = _iterator5.next()).done); _iteratorNormalCompletion5 = true) {
-								var frameKey = _step5.value;
+									sheetData.frames["" + this._options.identifier + frameIndex] = {
+										"frame": { "x": x, "y": y, "w": this._options.frameWidth, "h": this._options.frameHeight },
+										"rotated": false,
+										"trimmed": false,
+										"spriteSourceSize": { "x": 0, "y": 0, "w": this._options.frameWidth, "h": this._options.frameHeight },
+										"sourceSize": { "w": this._options.frameWidth, "h": this._options.frameHeight },
+										"pivot": { "x": 0.5, "y": 0.5 }
+									};
 
-								time = frameIndex * (1000 / this._options.fps);
+									frameIndex += 1;
 
-								ctx = this._canvasBuffers[sheetIndex].getContext("2d");
-
-								this._drawSprite(ctx, time, sheet.frames[frameKey].frame);
-
-								frameIndex += 1;
+									if (frameIndex > maxIndex) {
+										return sheetData;
+									}
+								}
 							}
-						} catch (err) {
-							_didIteratorError5 = true;
-							_iteratorError5 = err;
-						} finally {
+
+							return sheetData;
+						}
+					}, {
+						key: "_getSheetMaxCells",
+						value: function _getSheetMaxCells(dimension) {
+							if (dimension == null) {
+								dimension = _SHEET_DIMENSIONS[_SHEET_DIMENSIONS.length - 1];
+							}
+							return Math.floor(dimension / this._options.frameWidth) * Math.floor(dimension / this._options.frameHeight);
+						}
+					}, {
+						key: "_executeDraw",
+						value: function _executeDraw() {
+							var ctx = void 0,
+							    time = void 0,
+							    frameData = void 0;
+							var frameIndex = 0;
+							var sheetIndex = 0;
+
+							var _iteratorNormalCompletion4 = true;
+							var _didIteratorError4 = false;
+							var _iteratorError4 = undefined;
+
 							try {
-								if (!_iteratorNormalCompletion5 && _iterator5["return"]) {
-									_iterator5["return"]();
+								for (var _iterator4 = this._sheetData[Symbol.iterator](), _step4; !(_iteratorNormalCompletion4 = (_step4 = _iterator4.next()).done); _iteratorNormalCompletion4 = true) {
+									var sheet = _step4.value;
+									var _iteratorNormalCompletion5 = true;
+									var _didIteratorError5 = false;
+									var _iteratorError5 = undefined;
+
+									try {
+										for (var _iterator5 = Object.keys(sheet.frames)[Symbol.iterator](), _step5; !(_iteratorNormalCompletion5 = (_step5 = _iterator5.next()).done); _iteratorNormalCompletion5 = true) {
+											var frameKey = _step5.value;
+
+											time = frameIndex * (1000 / this._options.fps);
+
+											ctx = this._canvasBuffers[sheetIndex].getContext("2d");
+
+											this._drawSprite(ctx, time, sheet.frames[frameKey].frame);
+
+											frameIndex += 1;
+										}
+									} catch (err) {
+										_didIteratorError5 = true;
+										_iteratorError5 = err;
+									} finally {
+										try {
+											if (!_iteratorNormalCompletion5 && _iterator5.return) {
+												_iterator5.return();
+											}
+										} finally {
+											if (_didIteratorError5) {
+												throw _iteratorError5;
+											}
+										}
+									}
+
+									sheetIndex += 1;
 								}
+							} catch (err) {
+								_didIteratorError4 = true;
+								_iteratorError4 = err;
 							} finally {
-								if (_didIteratorError5) {
-									throw _iteratorError5;
+								try {
+									if (!_iteratorNormalCompletion4 && _iterator4.return) {
+										_iterator4.return();
+									}
+								} finally {
+									if (_didIteratorError4) {
+										throw _iteratorError4;
+									}
 								}
 							}
 						}
-
-						sheetIndex += 1;
-					}
-				} catch (err) {
-					_didIteratorError4 = true;
-					_iteratorError4 = err;
-				} finally {
-					try {
-						if (!_iteratorNormalCompletion4 && _iterator4["return"]) {
-							_iterator4["return"]();
+					}, {
+						key: "_drawSprite",
+						value: function _drawSprite(ctx, time, frameRect) {
+							// reset context
+							ctx.setTransform(1, 0, 0, 1, 0, 0);
+							// position context
+							ctx.translate(frameRect.x, frameRect.y);
+							// get state
+							var state = this._options.timeline.getState(time);
+							// request draw
+							this._options.draw(ctx, state);
 						}
-					} finally {
-						if (_didIteratorError4) {
-							throw _iteratorError4;
+					}, {
+						key: "_clearBuffers",
+						value: function _clearBuffers() {
+							var _iteratorNormalCompletion6 = true;
+							var _didIteratorError6 = false;
+							var _iteratorError6 = undefined;
+
+							try {
+								for (var _iterator6 = this._canvasBuffers[Symbol.iterator](), _step6; !(_iteratorNormalCompletion6 = (_step6 = _iterator6.next()).done); _iteratorNormalCompletion6 = true) {
+									var canvas = _step6.value;
+
+									canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
+								}
+							} catch (err) {
+								_didIteratorError6 = true;
+								_iteratorError6 = err;
+							} finally {
+								try {
+									if (!_iteratorNormalCompletion6 && _iterator6.return) {
+										_iterator6.return();
+									}
+								} finally {
+									if (_didIteratorError6) {
+										throw _iteratorError6;
+									}
+								}
+							}
 						}
-					}
-				}
-			}
-		}, {
-			key: "_drawSprite",
-			value: function _drawSprite(ctx, time, frameRect) {
-				// reset context
-				ctx.setTransform(1, 0, 0, 1, 0, 0);
-				// position context
-				ctx.translate(frameRect.x, frameRect.y);
-				// get state
-				var state = this._options.timeline.getState(time);
-				// request draw
-				this._options.draw(ctx, state);
-			}
-		}, {
-			key: "_clearBuffers",
-			value: function _clearBuffers() {
-				var _iteratorNormalCompletion6 = true;
-				var _didIteratorError6 = false;
-				var _iteratorError6 = undefined;
+					}, {
+						key: "_getSpriteSheetImageData",
+						value: function _getSpriteSheetImageData() {
+							var spriteSheetImageData = [];
+							for (var i = 0; i < this._sheetData.length; i++) {
+								spriteSheetImageData.push(this._canvasBuffers[i].getContext("2d").getImageData(0, 0, this._sheetData[i].meta.size.w, this._sheetData[i].meta.size.h));
+							}
 
-				try {
-					for (var _iterator6 = this._canvasBuffers[Symbol.iterator](), _step6; !(_iteratorNormalCompletion6 = (_step6 = _iterator6.next()).done); _iteratorNormalCompletion6 = true) {
-						var canvas = _step6.value;
-
-						canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
-					}
-				} catch (err) {
-					_didIteratorError6 = true;
-					_iteratorError6 = err;
-				} finally {
-					try {
-						if (!_iteratorNormalCompletion6 && _iterator6["return"]) {
-							_iterator6["return"]();
+							return spriteSheetImageData;
 						}
-					} finally {
-						if (_didIteratorError6) {
-							throw _iteratorError6;
+					}, {
+						key: "_getSpriteSheetCanvas",
+						value: function _getSpriteSheetCanvas() {
+							var spriteSheetCanvas = [];
+							var canvas = void 0;
+							for (var i = 0; i < this._sheetData.length; i++) {
+								canvas = document.createElement('canvas');
+								canvas.width = this._sheetData[i].meta.size.w;
+								canvas.height = this._sheetData[i].meta.size.h;
+								canvas.getContext("2d").drawImage(this._canvasBuffers[i], 0, 0);
+								spriteSheetCanvas.push(canvas);
+							}
+
+							return spriteSheetCanvas;
 						}
-					}
-				}
-			}
-		}, {
-			key: "_getSpriteSheetImageData",
-			value: function _getSpriteSheetImageData() {
-				var spriteSheetImageData = [];
-				for (var i = 0; i < this._sheetData.length; i++) {
-					spriteSheetImageData.push(this._canvasBuffers[i].getContext("2d").getImageData(0, 0, this._sheetData[i].meta.size.w, this._sheetData[i].meta.size.h));
-				}
+					}, {
+						key: "sheetLength",
+						get: function get() {
+							return this._canvasBuffers.length;
+						}
+					}, {
+						key: "frameLength",
+						get: function get() {
+							return this._frameLength;
+						}
+					}]);
 
-				return spriteSheetImageData;
-			}
-		}, {
-			key: "_getSpriteSheetCanvas",
-			value: function _getSpriteSheetCanvas() {
-				var spriteSheetCanvas = [];
-				var canvas = undefined;
-				for (var i = 0; i < this._sheetData.length; i++) {
-					canvas = document.createElement('canvas');
-					canvas.width = this._sheetData[i].meta.size.w;
-					canvas.height = this._sheetData[i].meta.size.h;
-					canvas.getContext("2d").drawImage(this._canvasBuffers[i], 0, 0);
-					spriteSheetCanvas.push(canvas);
-				}
+					return SpriteSheetBuilder;
+				}();
 
-				return spriteSheetCanvas;
-			}
-		}, {
-			key: "sheetLength",
-			get: function get() {
-				return this._canvasBuffers.length;
-			}
-		}, {
-			key: "frameLength",
-			get: function get() {
-				return this._frameLength;
-			}
-		}]);
+				exports.default = SpriteSheetBuilder;
 
-		return SpriteSheetBuilder;
-	})();
+				/***/
+			},
+			/* 1 */
+			/***/function (module, exports, __webpack_require__) {
 
-	exports["default"] = SpriteSheetBuilder;
-	module.exports = exports["default"];
+				(function webpackUniversalModuleDefinition(root, factory) {
+					if (true) module.exports = factory();else if (typeof define === 'function' && define.amd) define([], factory);else if ((typeof exports === 'undefined' ? 'undefined' : _typeof(exports)) === 'object') exports["Timeline"] = factory();else root["Timeline"] = factory();
+				})(this, function () {
+					return (/******/function (modules) {
+							// webpackBootstrap
+							/******/ // The module cache
+							/******/var installedModules = {};
+
+							/******/ // The require function
+							/******/function __webpack_require__(moduleId) {
+
+								/******/ // Check if module is in cache
+								/******/if (installedModules[moduleId])
+									/******/return installedModules[moduleId].exports;
+
+								/******/ // Create a new module (and put it into the cache)
+								/******/var module = installedModules[moduleId] = {
+									/******/exports: {},
+									/******/id: moduleId,
+									/******/loaded: false
+									/******/ };
+
+								/******/ // Execute the module function
+								/******/modules[moduleId].call(module.exports, module, module.exports, __webpack_require__);
+
+								/******/ // Flag the module as loaded
+								/******/module.loaded = true;
+
+								/******/ // Return the exports of the module
+								/******/return module.exports;
+								/******/
+							}
+
+							/******/ // expose the modules object (__webpack_modules__)
+							/******/__webpack_require__.m = modules;
+
+							/******/ // expose the module cache
+							/******/__webpack_require__.c = installedModules;
+
+							/******/ // __webpack_public_path__
+							/******/__webpack_require__.p = "";
+
+							/******/ // Load entry module and return exports
+							/******/return __webpack_require__(0);
+							/******/
+						}(
+						/************************************************************************/
+						/******/[
+						/* 0 */
+						/***/function (module, exports, __webpack_require__) {
+
+							'use strict';
+
+							Object.defineProperty(exports, "__esModule", {
+								value: true
+							});
+							exports.MotionTween = exports.Tween = exports.InteractiveTimeline = exports.Timeline = undefined;
+
+							var _timeline = __webpack_require__(1);
+
+							var _timeline2 = _interopRequireDefault(_timeline);
+
+							var _interactiveTimeline = __webpack_require__(6);
+
+							var _interactiveTimeline2 = _interopRequireDefault(_interactiveTimeline);
+
+							var _tween = __webpack_require__(3);
+
+							var _tween2 = _interopRequireDefault(_tween);
+
+							var _motionTween = __webpack_require__(4);
+
+							var _motionTween2 = _interopRequireDefault(_motionTween);
+
+							function _interopRequireDefault(obj) {
+								return obj && obj.__esModule ? obj : { default: obj };
+							}
+
+							exports.Timeline = _timeline2.default;
+							exports.InteractiveTimeline = _interactiveTimeline2.default;
+							exports.Tween = _tween2.default;
+							exports.MotionTween = _motionTween2.default;
+
+							/***/
+						},
+						/* 1 */
+						/***/function (module, exports, __webpack_require__) {
+
+							'use strict';
+
+							Object.defineProperty(exports, "__esModule", {
+								value: true
+							});
+
+							var _extends = Object.assign || function (target) {
+								for (var i = 1; i < arguments.length; i++) {
+									var source = arguments[i];for (var key in source) {
+										if (Object.prototype.hasOwnProperty.call(source, key)) {
+											target[key] = source[key];
+										}
+									}
+								}return target;
+							};
+
+							var _createClass = function () {
+								function defineProperties(target, props) {
+									for (var i = 0; i < props.length; i++) {
+										var descriptor = props[i];descriptor.enumerable = descriptor.enumerable || false;descriptor.configurable = true;if ("value" in descriptor) descriptor.writable = true;Object.defineProperty(target, descriptor.key, descriptor);
+									}
+								}return function (Constructor, protoProps, staticProps) {
+									if (protoProps) defineProperties(Constructor.prototype, protoProps);if (staticProps) defineProperties(Constructor, staticProps);return Constructor;
+								};
+							}();
+
+							var _timelineState = __webpack_require__(2);
+
+							var _timelineState2 = _interopRequireDefault(_timelineState);
+
+							var _tween = __webpack_require__(3);
+
+							var _tween2 = _interopRequireDefault(_tween);
+
+							function _interopRequireDefault(obj) {
+								return obj && obj.__esModule ? obj : { default: obj };
+							}
+
+							function _classCallCheck(instance, Constructor) {
+								if (!(instance instanceof Constructor)) {
+									throw new TypeError("Cannot call a class as a function");
+								}
+							}
+
+							function _possibleConstructorReturn(self, call) {
+								if (!self) {
+									throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+								}return call && ((typeof call === 'undefined' ? 'undefined' : _typeof(call)) === "object" || typeof call === "function") ? call : self;
+							}
+
+							function _inherits(subClass, superClass) {
+								if (typeof superClass !== "function" && superClass !== null) {
+									throw new TypeError("Super expression must either be null or a function, not " + (typeof superClass === 'undefined' ? 'undefined' : _typeof(superClass)));
+								}subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } });if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass;
+							}
+
+							var _TIMELINE_DEFAULT_OPTIONS = {
+								fps: 60
+							};
+
+							var _CHILD_DEFAULT_OPTIONS = {
+								fillMode: "both",
+								in: null,
+								loop: false,
+								out: null,
+								time: null
+							};
+
+							var Timeline = function (_Tween) {
+								_inherits(Timeline, _Tween);
+
+								function Timeline(name, keyframesObject, options) {
+									_classCallCheck(this, Timeline);
+
+									var _this = _possibleConstructorReturn(this, Object.getPrototypeOf(Timeline).call(this, name, keyframesObject, options));
+
+									_this._children = [];
+									_this._currentTime = 0;
+
+									_this._options = _extends({}, _TIMELINE_DEFAULT_OPTIONS, options);
+									return _this;
+								}
+
+								/*________________________________________________________
+	       	PUBLIC CLASS METHODS
+	       ________________________________________________________*/
+
+								_createClass(Timeline, [{
+									key: Symbol.iterator,
+									value: function value() {
+										return this;
+									}
+								}, {
+									key: 'next',
+									value: function next() {
+										return this._next();
+									}
+								}, {
+									key: 'addChild',
+									value: function addChild(child, options) {
+										this._addChild(child, options);
+									}
+								}, {
+									key: '_addChild',
+
+									/*________________________________________________________
+	        	PRIVATE CLASS METHODS
+	        ________________________________________________________*/
+
+									value: function _addChild(child, options) {
+										// clone options into settings property
+										var o = {
+											child: child,
+											settings: _extends({}, _CHILD_DEFAULT_OPTIONS, options)
+										};
+
+										// set time property if not already set
+										if (o.settings.time == null) {
+											o.settings.time = 0;
+										}
+
+										// set in property if not already set
+										if (o.settings.in == null) {
+											o.settings.in = o.settings.time;
+										}
+
+										// set out property if not already set
+										if (o.settings.out == null) {
+											o.settings.out = o.settings.time + child.duration;
+										}
+
+										this._validateChildOptions(o.settings);
+
+										this._children.push(o);
+
+										var childDuration = this._getChildrenDuration();
+
+										var localDuration = this._getKeyframesDuration();
+
+										this._duration = Math.max(childDuration, localDuration);
+									}
+								}, {
+									key: '_validateChildOptions',
+									value: function _validateChildOptions(settings) {
+										var fillModes = Object.keys(Timeline.FILL_MODE).map(function (key) {
+											return Timeline.FILL_MODE[key];
+										});
+
+										if (fillModes.indexOf(settings.fillMode) === -1) {
+											throw Error("Incorrectly set fillMode: " + settings.fillMode);
+										}
+
+										if (settings.in < settings.time) {
+											throw Error("The 'in' option can't preceed the 'time' option");
+										}
+
+										if (settings.in > settings.out) {
+											throw Error("The 'in' option can't be after the 'out' option");
+										}
+
+										if (settings.out < settings.time || settings.out < settings.in) {
+											throw Error("The 'out' option can't preceed the 'time' or 'in' option");
+										}
+									}
+								}, {
+									key: '_removeChild',
+									value: function _removeChild() {}
+								}, {
+									key: '_getChildrenDuration',
+									value: function _getChildrenDuration() {
+										var duration = 0;
+
+										this._children.forEach(function (childObjectData, index) {
+
+											duration = Math.max(duration, childObjectData.settings.out);
+										});
+
+										return duration;
+									}
+								}, {
+									key: '_getState',
+									value: function _getState(time) {
+										var _this2 = this;
+
+										var state = new _timelineState2.default(_timelineState2.default.TYPE.TIMELINE, this._name);
+										var tweenState = void 0,
+										    resolvedTime = void 0;
+
+										// Check to see if we have specified the 'timeRemap' property,
+										// if so remap time and then obtain state
+										if (this._propertyKeyframesMap.size > 0) {
+											if (this._propertyKeyframesMap.has("timeRemap")) {
+												var keyframes = this._propertyKeyframesMap.get("timeRemap");
+
+												// @TODO if time comes in here undefined then it is resolved to null,
+												// where we usually expect an undefined to deliver us a null state property value
+												// resolved time is returning as 0, and therefore we are not getting the correct state
+
+												// 160619 this is now done, undefined in produces null out
+
+												time = this._getTimeRemapTweenValue(keyframes, time);
+											}
+										}
+
+										this._children.forEach(function (childObjectData, index) {
+
+											// loop is accounted for here, fill is automatically built into tween
+											resolvedTime = _this2._resolveChildRelativeTime(time, childObjectData.settings);
+
+											tweenState = childObjectData.child.getState(resolvedTime);
+
+											state.addChild(tweenState);
+										});
+
+										return state;
+									}
+
+									/**
+	         * Method takes any time and wraps it accordingly to be within in and out points
+	         *
+	         * @private
+	         * @param {Number} time Time in milisecond
+	         * @return Number
+	         */
+
+								}, {
+									key: '_loopTime',
+									value: function _loopTime(time, childSettings) {
+										var childEditDuration = childSettings.out - childSettings.in;
+										var realativeTime = time - childSettings.in;
+										var loopedTime = (realativeTime % childEditDuration + childEditDuration) % childEditDuration;
+										return childSettings.in + loopedTime;
+									}
+
+									/**
+	         * Method takes any time and checks whether the time value requires wrapping, if so then returns wrapped time
+	         *
+	         * @private
+	         * @param {Number} time Time in milisecond
+	         * @return Number
+	         */
+
+								}, {
+									key: '_resolveChildRelativeTime',
+									value: function _resolveChildRelativeTime(time, childSettings) {
+										// brief check to see if the time is null or undefined, this may come as a result of attempting to obtain
+										// a time outside of the parents range, previously below return 0 resulting in incorrect resolved time.
+										if (time == null) {
+											return time;
+										}
+
+										// now we have the beginning position of the child we can determine the time relative to the child
+										var childRelativeTime = time - childSettings.time;
+
+										if (time < childSettings.in) {
+											if (childSettings.fillMode === Timeline.FILL_MODE.BACKWARD || childSettings.fillMode === Timeline.FILL_MODE.BOTH) {
+
+												if (childSettings.loop) {
+													return this._loopTime(time, childSettings) - childSettings.time;
+												} else {
+													return childSettings.in - childSettings.time;
+												}
+											} else {
+												return undefined;
+											}
+										}
+
+										if (time > childSettings.out) {
+											if (childSettings.fillMode === Timeline.FILL_MODE.FORWARD || childSettings.fillMode === Timeline.FILL_MODE.BOTH) {
+												if (childSettings.loop) {
+													return this._loopTime(time, childSettings) - childSettings.time;
+												} else {
+													return childSettings.out - childSettings.time;
+												}
+											} else {
+												return undefined;
+											}
+										}
+
+										return childRelativeTime;
+									}
+
+									/**
+	         * Method takes an array of timeRemap Keyframes and time and returns the tweened time at that time
+	         *
+	         * @private
+	         * @param {Array} keyframes Array of keyframe objects with time and value properties.
+	         * @param {Number} time Time in milisecond
+	         * @return Number
+	         */
+
+								}, {
+									key: '_getTimeRemapTweenValue',
+									value: function _getTimeRemapTweenValue(keyframes, time) {
+										var value = null;
+										// interate over keyframes untill we find the exact value or keyframes either side
+										var length = keyframes.length;
+										var keyframe = void 0,
+										    keyframeValue = void 0;
+										var lastKeyframe = void 0;
+
+										// the aim here is to find the keyframe to either side of the time value
+
+										var previousKeyframe = null;
+										var nextKeyframe = null;
+
+										for (var i = 0; i < length; i++) {
+											keyframe = keyframes[i];
+											keyframeValue = keyframe.value;
+
+											if (time === keyframe.time) {
+												return keyframe.value;
+											} else if (time > keyframe.time) {
+												previousKeyframe = keyframe;
+												// no need to break here as we continue iterating through keyFrames to find the keyframe just previous to the time value
+											} else if (time < keyframe.time) {
+													nextKeyframe = keyframe;
+													break; // break here has we have gone far enough to get the next keyFrame
+												}
+										}
+
+										if (previousKeyframe == null && nextKeyframe == null) {
+											return value;
+										}
+
+										if (previousKeyframe == null) {
+											// when we have no previouskeyframe the natural behaviour differs from standard tween keyframes,
+											// instead of gleening the next keyframe value, we want to determine the time relative to the
+											// time remaped at the nextKeyframe value. Look at the example below
+
+											// nextKeyframe.time = 50
+											// nextKeyframe.value = 25
+											// time = 30
+											// value = nextKeyframe.value - (nextKeyframe.time - time) // ergo 5
+
+											return nextKeyframe.value - (nextKeyframe.time - time);
+										}
+
+										if (nextKeyframe == null) {
+
+											// see above reasoning
+
+											// previousKeyframe.time = 50
+											// previousKeyframe.value = 25
+											// time = 70
+											// value = previousKeyframe.value - (previousKeyframe.time - time) // ergo 45
+
+											return previousKeyframe.value - (previousKeyframe.time - time);
+										}
+
+										if (previousKeyframe != null && nextKeyframe != null) {
+											// check for a hold keyframe
+											if (previousKeyframe.hold != null && previousKeyframe.hold === true) {
+												return previousKeyframe.value;
+											}
+
+											value = this._tweenBetweenKeyframes(previousKeyframe, nextKeyframe, time);
+										}
+
+										return value;
+									}
+								}, {
+									key: '_next',
+									value: function _next() {
+										var time = this._currentTime;
+
+										this._currentTime += 1000 / this._options.fps;
+
+										var done = time >= this._duration;
+
+										if (done) {
+											this._currentTime = 0;
+											return { done: done };
+										} else {
+											return {
+												value: this._getState(time)
+											};
+										}
+									}
+								}, {
+									key: 'currentTime',
+									set: function set(time) {
+										this._currentTime = time;
+									},
+									get: function get() {
+										return this._currentTime;
+									}
+								}, {
+									key: 'duration',
+									get: function get() {
+										return this._duration;
+									}
+								}]);
+
+								return Timeline;
+							}(_tween2.default);
+
+							Timeline.FILL_MODE = {
+								NONE: "none",
+								FORWARD: "forward",
+								BACKWARD: "backward",
+								BOTH: "both"
+							};
+							exports.default = Timeline;
+
+							/***/
+						},
+						/* 2 */
+						/***/function (module, exports) {
+
+							"use strict";
+
+							Object.defineProperty(exports, "__esModule", {
+								value: true
+							});
+
+							var _createClass = function () {
+								function defineProperties(target, props) {
+									for (var i = 0; i < props.length; i++) {
+										var descriptor = props[i];descriptor.enumerable = descriptor.enumerable || false;descriptor.configurable = true;if ("value" in descriptor) descriptor.writable = true;Object.defineProperty(target, descriptor.key, descriptor);
+									}
+								}return function (Constructor, protoProps, staticProps) {
+									if (protoProps) defineProperties(Constructor.prototype, protoProps);if (staticProps) defineProperties(Constructor, staticProps);return Constructor;
+								};
+							}();
+
+							function _classCallCheck(instance, Constructor) {
+								if (!(instance instanceof Constructor)) {
+									throw new TypeError("Cannot call a class as a function");
+								}
+							}
+
+							var TimelineState = function () {
+								function TimelineState(type, name) {
+									_classCallCheck(this, TimelineState);
+
+									this._type = TimelineState.TYPE.TWEEN;
+									this._children = null;
+									this._properties = null;
+									this._name = null;
+
+									this._type = type;
+									this._name = name;
+
+									this._properties = {};
+
+									if (this._type == TimelineState.TYPE.TIMELINE) {
+										this._children = [];
+									}
+								}
+
+								_createClass(TimelineState, [{
+									key: "addProperty",
+									value: function addProperty(key, value) {
+										this._properties[key] = value;
+									}
+								}, {
+									key: "addChild",
+									value: function addChild(timelineStateInstance) {
+										this._children.push(timelineStateInstance);
+									}
+								}, {
+									key: "type",
+									get: function get() {
+										return this._type;
+									}
+								}, {
+									key: "name",
+									get: function get() {
+										return this._name;
+									}
+								}, {
+									key: "children",
+									get: function get() {
+										// if (this._type !== TimelineState.TYPE.TIMELINE) {
+										// 	throw Error("TimelineState instance is not of type Timeline and there does not have children!");
+										// }
+										return this._children;
+									}
+								}, {
+									key: "properties",
+									get: function get() {
+										// if (this._type !== TimelineState.TYPE.TWEEN) {
+										// 	throw Error("TimelineState instance is not of type Tween and there does not have properties!");
+										// }
+										return this._properties;
+									}
+								}]);
+
+								return TimelineState;
+							}();
+
+							TimelineState.TYPE = {
+								TWEEN: "tween",
+								TIMELINE: "timeline"
+							};
+							exports.default = TimelineState;
+
+							/***/
+						},
+						/* 3 */
+						/***/function (module, exports, __webpack_require__) {
+
+							'use strict';
+
+							Object.defineProperty(exports, "__esModule", {
+								value: true
+							});
+
+							var _extends = Object.assign || function (target) {
+								for (var i = 1; i < arguments.length; i++) {
+									var source = arguments[i];for (var key in source) {
+										if (Object.prototype.hasOwnProperty.call(source, key)) {
+											target[key] = source[key];
+										}
+									}
+								}return target;
+							};
+
+							var _createClass = function () {
+								function defineProperties(target, props) {
+									for (var i = 0; i < props.length; i++) {
+										var descriptor = props[i];descriptor.enumerable = descriptor.enumerable || false;descriptor.configurable = true;if ("value" in descriptor) descriptor.writable = true;Object.defineProperty(target, descriptor.key, descriptor);
+									}
+								}return function (Constructor, protoProps, staticProps) {
+									if (protoProps) defineProperties(Constructor.prototype, protoProps);if (staticProps) defineProperties(Constructor, staticProps);return Constructor;
+								};
+							}();
+
+							var _motionTween = __webpack_require__(4);
+
+							var _motionTween2 = _interopRequireDefault(_motionTween);
+
+							var _timelineState = __webpack_require__(2);
+
+							var _timelineState2 = _interopRequireDefault(_timelineState);
+
+							var _timelineAbstract = __webpack_require__(5);
+
+							var _timelineAbstract2 = _interopRequireDefault(_timelineAbstract);
+
+							function _interopRequireDefault(obj) {
+								return obj && obj.__esModule ? obj : { default: obj };
+							}
+
+							function _classCallCheck(instance, Constructor) {
+								if (!(instance instanceof Constructor)) {
+									throw new TypeError("Cannot call a class as a function");
+								}
+							}
+
+							var Tween = function () {
+								function Tween(name, keyframesObject) {
+									_classCallCheck(this, Tween);
+
+									this._propertyKeyframesMap = null;
+									this._options = null;
+									this._name = null;
+									this._duration = 0;
+
+									this._init(name, keyframesObject);
+								}
+
+								/*________________________________________________________
+	       	PUBLIC CLASS METHODS
+	       ________________________________________________________*/
+
+								_createClass(Tween, [{
+									key: 'addKeyframes',
+									value: function addKeyframes(keyframesObject) {
+										this._addKeyframes(keyframesObject);
+									}
+								}, {
+									key: 'getState',
+									value: function getState(time) {
+										return this._getState(time);
+									}
+								}, {
+									key: '_init',
+
+									/*________________________________________________________
+	        	PRIVATE CLASS METHODS
+	        ________________________________________________________*/
+
+									value: function _init(name, keyframesObject) {
+
+										if (name == null) {
+											throw Error("Name not specified");
+										}
+
+										this._name = name;
+
+										this._propertyKeyframesMap = new Map();
+
+										if (keyframesObject != null) {
+											this._addKeyframes(keyframesObject);
+										}
+									}
+								}, {
+									key: '_addKeyframes',
+									value: function _addKeyframes(keyframesObject) {
+										var _this = this;
+
+										var keyframes = void 0;
+
+										Object.keys(keyframesObject).map(function (key, index) {
+
+											keyframes = _this._cloneKeyframes(keyframesObject[key]);
+
+											_this._propertyKeyframesMap.set(key, keyframes);
+										});
+
+										this._duration = this._getKeyframesDuration();
+									}
+
+									/**
+	         * Method clones the array of keyframes
+	         *
+	         * @private
+	         * @param {Array} keyframes An Array of keyframe objects
+	         * @returns Array
+	         */
+
+								}, {
+									key: '_cloneKeyframes',
+									value: function _cloneKeyframes(keyframes) {
+										var keyframesCloned = keyframes.map(function (keyframe) {
+											return _extends({}, keyframe);
+										});
+
+										return keyframesCloned;
+									}
+								}, {
+									key: '_getKeyframesDuration',
+									value: function _getKeyframesDuration() {
+										var duration = 0;
+										// the durationdetermined here is relative to the entire tween, yet to be clipped by in and out
+										this._propertyKeyframesMap.forEach(function (keyframes, key) {
+											keyframes.forEach(function (keyframe, index) {
+												duration = Math.max(duration, keyframe.time);
+											});
+										});
+
+										return duration;
+									}
+
+									/**
+	         * Method calculates and returns the values for each property at the given time
+	         *
+	         * @private
+	         * @param {Number} time Time in milisecond
+	         * @return Object
+	         */
+
+								}, {
+									key: '_getState',
+									value: function _getState(time) {
+										var _this2 = this;
+
+										var state = new _timelineState2.default(_timelineState2.default.TYPE.TWEEN, this._name);
+
+										this._propertyKeyframesMap.forEach(function (keyframes, property) {
+
+											state.addProperty(property, _this2._getTweenValue(keyframes, time));
+										});
+
+										return state;
+									}
+
+									/**
+	         * Method takes an array of Keyframes and time and returns the tweened value at that time
+	         *
+	         * @private
+	         * @param {Array} keyframes Array of keyframe objects with time and value properties.
+	         * @param {Number} time Time in milisecond
+	         * @return Number
+	         */
+
+								}, {
+									key: '_getTweenValue',
+									value: function _getTweenValue(keyframes, time) {
+										var value = null;
+										// interate over keyframes untill we find the exact value or keyframes either side
+										var length = keyframes.length;
+										var keyframe = void 0,
+										    keyframeValue = void 0;
+										var lastKeyframe = void 0;
+
+										// the aim here is to find the keyframe to either side of the time value
+
+										var previousKeyframe = null;
+										var nextKeyframe = null;
+
+										for (var i = 0; i < length; i++) {
+											keyframe = keyframes[i];
+											keyframeValue = keyframe.value;
+
+											if (time === keyframe.time) {
+												return keyframe.value;
+											} else if (time > keyframe.time) {
+												previousKeyframe = keyframe;
+												// no need to break here as we continue iterating through keyFrames to find the keyframe just previous to the time value
+											} else if (time < keyframe.time) {
+													nextKeyframe = keyframe;
+													break; // break here has we have gone far enough to get the next keyFrame
+												}
+										}
+
+										if (previousKeyframe == null && nextKeyframe == null) {
+											return value;
+										}
+
+										if (previousKeyframe == null) {
+											return nextKeyframe.value;
+										}
+
+										if (nextKeyframe == null) {
+											return previousKeyframe.value;
+										}
+
+										if (previousKeyframe != null && nextKeyframe != null) {
+											// check for a hold keyframe
+											if (previousKeyframe.hold != null && previousKeyframe.hold === true) {
+												return previousKeyframe.value;
+											}
+
+											value = this._tweenBetweenKeyframes(previousKeyframe, nextKeyframe, time);
+										}
+
+										return value;
+									}
+
+									/**
+	        * Method calculates the value between two keyframes
+	        *
+	        * @private
+	        * @param {Object} lastKeyframe left keyframe object
+	        * @param {Object} keyframe right keyframe object
+	        * @param {Number} time Time in milisecond
+	        * @return Number
+	        */
+
+								}, {
+									key: '_tweenBetweenKeyframes',
+									value: function _tweenBetweenKeyframes(lastKeyframe, keyframe, time) {
+										// time difference between keyframes
+										var timeDifference = keyframe.time - lastKeyframe.time;
+										// percentage float 0-1 of time through difference
+										var deltaFloat = (time - lastKeyframe.time) / timeDifference;
+
+										var easedDelta = deltaFloat;
+
+										if (lastKeyframe.animatorType != null) {
+											var animatorOptions = {};
+											if (lastKeyframe.animatorOptions != null) {
+												animatorOptions = _extends({}, animatorOptions, lastKeyframe.animatorOptions);
+											}
+
+											easedDelta = _motionTween2.default.getValue(lastKeyframe.animatorType, animatorOptions, deltaFloat);
+										}
+
+										var valueDifference = keyframe.value - lastKeyframe.value;
+										var tweenedValue = lastKeyframe.value + valueDifference * easedDelta;
+
+										return tweenedValue;
+									}
+								}, {
+									key: 'duration',
+									get: function get() {
+										return this._duration;
+									}
+								}, {
+									key: 'name',
+									get: function get() {
+										return this._name;
+									}
+								}]);
+
+								return Tween;
+							}();
+
+							exports.default = Tween;
+
+							/***/
+						},
+						/* 4 */
+						/***/function (module, exports, __webpack_require__) {
+
+							(function webpackUniversalModuleDefinition(root, factory) {
+								if (true) module.exports = factory();else if (typeof define === 'function' && define.amd) define([], factory);else {
+									var a = factory();
+									for (var i in a) {
+										((typeof exports === 'undefined' ? 'undefined' : _typeof(exports)) === 'object' ? exports : root)[i] = a[i];
+									}
+								}
+							})(this, function () {
+								return (/******/function (modules) {
+										// webpackBootstrap
+										/******/ // The module cache
+										/******/var installedModules = {};
+
+										/******/ // The require function
+										/******/function __webpack_require__(moduleId) {
+
+											/******/ // Check if module is in cache
+											/******/if (installedModules[moduleId])
+												/******/return installedModules[moduleId].exports;
+
+											/******/ // Create a new module (and put it into the cache)
+											/******/var module = installedModules[moduleId] = {
+												/******/exports: {},
+												/******/id: moduleId,
+												/******/loaded: false
+												/******/ };
+
+											/******/ // Execute the module function
+											/******/modules[moduleId].call(module.exports, module, module.exports, __webpack_require__);
+
+											/******/ // Flag the module as loaded
+											/******/module.loaded = true;
+
+											/******/ // Return the exports of the module
+											/******/return module.exports;
+											/******/
+										}
+
+										/******/ // expose the modules object (__webpack_modules__)
+										/******/__webpack_require__.m = modules;
+
+										/******/ // expose the module cache
+										/******/__webpack_require__.c = installedModules;
+
+										/******/ // __webpack_public_path__
+										/******/__webpack_require__.p = "";
+
+										/******/ // Load entry module and return exports
+										/******/return __webpack_require__(0);
+										/******/
+									}(
+									/************************************************************************/
+									/******/[
+									/* 0 */
+									/***/function (module, exports, __webpack_require__) {
+
+										module.exports = __webpack_require__(1);
+
+										/***/
+									},
+									/* 1 */
+									/***/function (module, exports, __webpack_require__) {
+
+										"use strict";
+
+										Object.defineProperty(exports, "__esModule", {
+											value: true
+										});
+
+										var _createClass = function () {
+											function defineProperties(target, props) {
+												for (var i = 0; i < props.length; i++) {
+													var descriptor = props[i];descriptor.enumerable = descriptor.enumerable || false;descriptor.configurable = true;if ("value" in descriptor) descriptor.writable = true;Object.defineProperty(target, descriptor.key, descriptor);
+												}
+											}return function (Constructor, protoProps, staticProps) {
+												if (protoProps) defineProperties(Constructor.prototype, protoProps);if (staticProps) defineProperties(Constructor, staticProps);return Constructor;
+											};
+										}();
+
+										function _interopRequireWildcard(obj) {
+											if (obj && obj.__esModule) {
+												return obj;
+											} else {
+												var newObj = {};if (obj != null) {
+													for (var key in obj) {
+														if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key];
+													}
+												}newObj["default"] = obj;return newObj;
+											}
+										}
+
+										function _interopRequireDefault(obj) {
+											return obj && obj.__esModule ? obj : { "default": obj };
+										}
+
+										function _classCallCheck(instance, Constructor) {
+											if (!(instance instanceof Constructor)) {
+												throw new TypeError("Cannot call a class as a function");
+											}
+										}
+
+										var _Utils = __webpack_require__(2);
+
+										var _Utils2 = _interopRequireDefault(_Utils);
+
+										var _Easing = __webpack_require__(3);
+
+										var Easing = _interopRequireWildcard(_Easing);
+
+										var _animatorsCubicBezier = __webpack_require__(4);
+
+										var _animatorsCubicBezier2 = _interopRequireDefault(_animatorsCubicBezier);
+
+										var _animatorsEase = __webpack_require__(5);
+
+										var _animatorsEase2 = _interopRequireDefault(_animatorsEase);
+
+										var _animatorsFriction = __webpack_require__(6);
+
+										var _animatorsFriction2 = _interopRequireDefault(_animatorsFriction);
+
+										var _animatorsSpring = __webpack_require__(7);
+
+										var _animatorsSpring2 = _interopRequireDefault(_animatorsSpring);
+
+										var _animatorsSpringRK4 = __webpack_require__(8);
+
+										var _animatorsSpringRK42 = _interopRequireDefault(_animatorsSpringRK4);
+
+										var MotionTween = function () {
+											_createClass(MotionTween, null, [{
+												key: "DEFAULT_OPTIONS",
+												value: {
+													time: 1000,
+													startValue: 0,
+													endValue: 1,
+													animatorType: _animatorsFriction2["default"].Type,
+													animatorOptions: {}, // use defaults of selected type
+													update: function update() {},
+													complete: function complete() {}
+												},
+												enumerable: true
+											}, {
+												key: "easingFunction",
+												value: {
+													easeInQuad: Easing.easeInQuad,
+													easeOutQuad: Easing.easeOutQuad,
+													easeInOutQuad: Easing.easeInOutQuad,
+													swing: Easing.swing,
+													easeInCubic: Easing.easeInCubic,
+													easeOutCubic: Easing.easeOutCubic,
+													easeInOutCubic: Easing.easeInOutCubic,
+													easeInQuart: Easing.easeInQuart,
+													easeOutQuart: Easing.easeOutQuart,
+													easeInOutQuart: Easing.easeInOutQuart,
+													easeInQuint: Easing.easeInQuint,
+													easeOutQuint: Easing.easeOutQuint,
+													easeInOutQuint: Easing.easeInOutQuint,
+													easeInSine: Easing.easeInSine,
+													easeOutSine: Easing.easeOutSine,
+													easeInOutSine: Easing.easeInOutSine,
+													easeInExpo: Easing.easeInExpo,
+													easeOutExpo: Easing.easeOutExpo,
+													easeInOutExpo: Easing.easeInOutExpo,
+													easeInCirc: Easing.easeInCirc,
+													easeOutCirc: Easing.easeOutCirc,
+													easeInOutCirc: Easing.easeInOutCirc,
+													easeInElastic: Easing.easeInElastic,
+													easeOutElastic: Easing.easeOutElastic,
+													easeInOutElastic: Easing.easeInOutElastic,
+													easeInBack: Easing.easeInBack,
+													easeOutBack: Easing.easeOutBack,
+													easeInOutBack: Easing.easeInOutBack,
+													easeInBounce: Easing.easeInBounce,
+													easeOutBounce: Easing.easeOutBounce,
+													easeInOutBounce: Easing.easeInOutBounce
+												},
+												enumerable: true
+											}, {
+												key: "animatorType",
+												value: {
+													spring: _animatorsSpring2["default"].Type,
+													springRK4: _animatorsSpringRK42["default"].Type,
+													friction: _animatorsFriction2["default"].Type,
+													ease: _animatorsEase2["default"].Type,
+													cubicBezier: _animatorsCubicBezier2["default"].Type
+												},
+												enumerable: true
+											}]);
+
+											function MotionTween(options) {
+												_classCallCheck(this, MotionTween);
+
+												this._time = null;
+												this._startX = null;
+												this._endX = null;
+												this._lastTime = null;
+												this._startTime = null;
+												this._options = {};
+												this._isAnimating = false;
+												this._animator = null;
+												this._x = null;
+
+												this._init(options);
+												return this;
+											}
+
+											_createClass(MotionTween, [{
+												key: "start",
+												value: function start() {
+													this._start();
+												}
+											}, {
+												key: "destroy",
+												value: function destroy() {
+													this._destroy();
+												}
+											}, {
+												key: "_init",
+												value: function _init(options) {
+													// Deep merge of default and incoming options
+													_Utils2["default"].extend(this._options, MotionTween.DEFAULT_OPTIONS, true);
+													_Utils2["default"].extend(this._options, options, true);
+
+													// time we can ignore for some of the animators
+													this._time = this._options.time;
+													this._startX = this._options.startValue;
+													this._endX = this._options.endValue;
+												}
+											}, {
+												key: "_start",
+												value: function _start() {
+													this._lastTime = 0;
+													this._startTime = 0;
+
+													this._options.animatorOptions.destination = this._endX;
+													this._options.animatorOptions.origin = this._startX;
+
+													switch (this._options.animatorType) {
+														case _animatorsSpring2["default"].Type:
+															this._animator = new _animatorsSpring2["default"](this._options.animatorOptions);
+															break;
+														case _animatorsSpringRK42["default"].Type:
+															this._animator = new _animatorsSpringRK42["default"](this._options.animatorOptions);
+															break;
+														case _animatorsFriction2["default"].Type:
+															this._animator = new _animatorsFriction2["default"](this._options.animatorOptions);
+															break;
+														case _animatorsCubicBezier2["default"].Type:
+															this._animator = new _animatorsCubicBezier2["default"](this._options.animatorOptions);
+															break;
+														default:
+															this._animator = new _animatorsEase2["default"](this._options.animatorOptions);
+													}
+
+													this._isAnimating = true;
+													this._startTime = this._lastTime = new Date().getTime();
+
+													this._requestionAnimationFrameID = window.requestAnimationFrame(this._tick.bind(this));
+												}
+											}, {
+												key: "_destroy",
+												value: function _destroy() {
+													window.cancelAnimationFrame(this._requestionAnimationFrameID);
+													this._options = null;
+												}
+											}, {
+												key: "_tick",
+												value: function _tick() {
+													var now = new Date().getTime();
+
+													var delta = (now - this._lastTime) / this._time;
+													this._lastTime = now;
+
+													// pass in normalised delta
+													var x = this._animator.step(delta);
+
+													if (this._animator.isFinished() === false) {
+
+														this._x = x;
+
+														this._options.update(this._x);
+														this._requestionAnimationFrameID = window.requestAnimationFrame(this._tick.bind(this));
+													} else {
+														this._x = this._endX;
+														this._options.update(this._x);
+														this._options.complete();
+														this._isAnimating = false;
+													}
+												}
+											}], [{
+												key: "getValue",
+												value: function getValue(animatorType, animatorOptions, time) {
+													return MotionTween._getValue(animatorType, animatorOptions, time);
+												}
+											}, {
+												key: "_getValue",
+												value: function _getValue(animatorType, animatorOptions, time) {
+													switch (animatorType) {
+														case _animatorsCubicBezier2["default"].Type:
+															return _animatorsCubicBezier2["default"].getValue(animatorOptions, time);
+															break;
+														default:
+															return _animatorsEase2["default"].getValue(animatorOptions, time);
+													}
+												}
+											}]);
+
+											return MotionTween;
+										}();
+
+										exports["default"] = MotionTween;
+										module.exports = exports["default"];
+
+										/***/
+									},
+									/* 2 */
+									/***/function (module, exports) {
+
+										'use strict';
+
+										Object.defineProperty(exports, '__esModule', {
+											value: true
+										});
+
+										var _createClass = function () {
+											function defineProperties(target, props) {
+												for (var i = 0; i < props.length; i++) {
+													var descriptor = props[i];descriptor.enumerable = descriptor.enumerable || false;descriptor.configurable = true;if ('value' in descriptor) descriptor.writable = true;Object.defineProperty(target, descriptor.key, descriptor);
+												}
+											}return function (Constructor, protoProps, staticProps) {
+												if (protoProps) defineProperties(Constructor.prototype, protoProps);if (staticProps) defineProperties(Constructor, staticProps);return Constructor;
+											};
+										}();
+
+										function _classCallCheck(instance, Constructor) {
+											if (!(instance instanceof Constructor)) {
+												throw new TypeError('Cannot call a class as a function');
+											}
+										}
+
+										var Utils = function () {
+											function Utils() {
+												_classCallCheck(this, Utils);
+											}
+
+											_createClass(Utils, [{
+												key: 'extend',
+												value: function extend(destination, source) {
+													var isDeep = arguments.length <= 2 || arguments[2] === undefined ? false : arguments[2];
+
+													var hasDepth = false;
+													for (var property in source) {
+														hasDepth = false;
+														if (isDeep === true && source[property] && source[property].constructor) {
+															if (source[property].constructor === Object) {
+																hasDepth = true;
+																destination[property] = this.extend({}, source[property], true);
+															} else if (source[property].constructor === Function) {
+																// if (window.console) console.warn("Can't clone, can only reference Functions");
+																hasDepth = false;
+															}
+														}
+														if (hasDepth === false) {
+															destination[property] = source[property];
+														}
+													}
+													return destination;
+												}
+											}, {
+												key: 'sum',
+												value: function sum(arr) {
+													var sum = 0;
+													var d = arr.length;
+													while (d--) {
+														sum += arr[d];
+													}
+													return sum;
+												}
+											}]);
+
+											return Utils;
+										}();
+
+										exports['default'] = new Utils();
+
+										(function () {
+											var lastTime = 0;
+											var vendors = ['ms', 'moz', 'webkit', 'o'];
+											for (var x = 0; x < vendors.length && !window.requestAnimationFrame; ++x) {
+												window.requestAnimationFrame = window[vendors[x] + 'RequestAnimationFrame'];
+												window.cancelAnimationFrame = window[vendors[x] + 'CancelAnimationFrame'] || window[vendors[x] + 'CancelRequestAnimationFrame'];
+											}
+
+											if (!window.requestAnimationFrame) {
+												window.requestAnimationFrame = function (callback, element) {
+													var currTime = new Date().getTime();
+													var timeToCall = Math.max(0, 16 - (currTime - lastTime));
+													var id = window.setTimeout(function () {
+														callback(currTime + timeToCall);
+													}, timeToCall);
+													lastTime = currTime + timeToCall;
+													return id;
+												};
+											}
+
+											if (!window.cancelAnimationFrame) {
+												window.cancelAnimationFrame = function (id) {
+													clearTimeout(id);
+												};
+											}
+										})();
+										module.exports = exports['default'];
+
+										/***/
+									},
+									/* 3 */
+									/***/function (module, exports) {
+
+										// t: current time, b: begInnIng value, c: change In value, d: duration
+										"use strict";
+
+										Object.defineProperty(exports, "__esModule", {
+											value: true
+										});
+										exports.swing = swing;
+										exports.easeInQuad = easeInQuad;
+										exports.easeOutQuad = easeOutQuad;
+										exports.easeInOutQuad = easeInOutQuad;
+										exports.easeInCubic = easeInCubic;
+										exports.easeOutCubic = easeOutCubic;
+										exports.easeInOutCubic = easeInOutCubic;
+										exports.easeInQuart = easeInQuart;
+										exports.easeOutQuart = easeOutQuart;
+										exports.easeInOutQuart = easeInOutQuart;
+										exports.easeInQuint = easeInQuint;
+										exports.easeOutQuint = easeOutQuint;
+										exports.easeInOutQuint = easeInOutQuint;
+										exports.easeInSine = easeInSine;
+										exports.easeOutSine = easeOutSine;
+										exports.easeInOutSine = easeInOutSine;
+										exports.easeInExpo = easeInExpo;
+										exports.easeOutExpo = easeOutExpo;
+										exports.easeInOutExpo = easeInOutExpo;
+										exports.easeInCirc = easeInCirc;
+										exports.easeOutCirc = easeOutCirc;
+										exports.easeInOutCirc = easeInOutCirc;
+										exports.easeInElastic = easeInElastic;
+										exports.easeOutElastic = easeOutElastic;
+										exports.easeInOutElastic = easeInOutElastic;
+										exports.easeInBack = easeInBack;
+										exports.easeOutBack = easeOutBack;
+										exports.easeInOutBack = easeInOutBack;
+										exports.easeInBounce = easeInBounce;
+										exports.easeOutBounce = easeOutBounce;
+										exports.easeInOutBounce = easeInOutBounce;
+
+										function swing(t, b, c, d) {
+											return easeOutQuad(t, b, c, d);
+										}
+
+										function easeInQuad(t, b, c, d) {
+											return c * (t /= d) * t + b;
+										}
+
+										function easeOutQuad(t, b, c, d) {
+											return -c * (t /= d) * (t - 2) + b;
+										}
+
+										function easeInOutQuad(t, b, c, d) {
+											if ((t /= d / 2) < 1) return c / 2 * t * t + b;
+											return -c / 2 * (--t * (t - 2) - 1) + b;
+										}
+
+										function easeInCubic(t, b, c, d) {
+											return c * (t /= d) * t * t + b;
+										}
+
+										function easeOutCubic(t, b, c, d) {
+											return c * ((t = t / d - 1) * t * t + 1) + b;
+										}
+
+										function easeInOutCubic(t, b, c, d) {
+											if ((t /= d / 2) < 1) return c / 2 * t * t * t + b;
+											return c / 2 * ((t -= 2) * t * t + 2) + b;
+										}
+
+										function easeInQuart(t, b, c, d) {
+											return c * (t /= d) * t * t * t + b;
+										}
+
+										function easeOutQuart(t, b, c, d) {
+											return -c * ((t = t / d - 1) * t * t * t - 1) + b;
+										}
+
+										function easeInOutQuart(t, b, c, d) {
+											if ((t /= d / 2) < 1) return c / 2 * t * t * t * t + b;
+											return -c / 2 * ((t -= 2) * t * t * t - 2) + b;
+										}
+
+										function easeInQuint(t, b, c, d) {
+											return c * (t /= d) * t * t * t * t + b;
+										}
+
+										function easeOutQuint(t, b, c, d) {
+											return c * ((t = t / d - 1) * t * t * t * t + 1) + b;
+										}
+
+										function easeInOutQuint(t, b, c, d) {
+											if ((t /= d / 2) < 1) return c / 2 * t * t * t * t * t + b;
+											return c / 2 * ((t -= 2) * t * t * t * t + 2) + b;
+										}
+
+										function easeInSine(t, b, c, d) {
+											return -c * Math.cos(t / d * (Math.PI / 2)) + c + b;
+										}
+
+										function easeOutSine(t, b, c, d) {
+											return c * Math.sin(t / d * (Math.PI / 2)) + b;
+										}
+
+										function easeInOutSine(t, b, c, d) {
+											return -c / 2 * (Math.cos(Math.PI * t / d) - 1) + b;
+										}
+
+										function easeInExpo(t, b, c, d) {
+											return t == 0 ? b : c * Math.pow(2, 10 * (t / d - 1)) + b;
+										}
+
+										function easeOutExpo(t, b, c, d) {
+											return t == d ? b + c : c * (-Math.pow(2, -10 * t / d) + 1) + b;
+										}
+
+										function easeInOutExpo(t, b, c, d) {
+											if (t == 0) return b;
+											if (t == d) return b + c;
+											if ((t /= d / 2) < 1) return c / 2 * Math.pow(2, 10 * (t - 1)) + b;
+											return c / 2 * (-Math.pow(2, -10 * --t) + 2) + b;
+										}
+
+										function easeInCirc(t, b, c, d) {
+											return -c * (Math.sqrt(1 - (t /= d) * t) - 1) + b;
+										}
+
+										function easeOutCirc(t, b, c, d) {
+											return c * Math.sqrt(1 - (t = t / d - 1) * t) + b;
+										}
+
+										function easeInOutCirc(t, b, c, d) {
+											if ((t /= d / 2) < 1) return -c / 2 * (Math.sqrt(1 - t * t) - 1) + b;
+											return c / 2 * (Math.sqrt(1 - (t -= 2) * t) + 1) + b;
+										}
+
+										function easeInElastic(t, b, c, d) {
+											var s = 1.70158;var p = 0;var a = c;
+											if (t == 0) return b;if ((t /= d) == 1) return b + c;if (!p) p = d * .3;
+											if (a < Math.abs(c)) {
+												a = c;var s = p / 4;
+											} else var s = p / (2 * Math.PI) * Math.asin(c / a);
+											return -(a * Math.pow(2, 10 * (t -= 1)) * Math.sin((t * d - s) * (2 * Math.PI) / p)) + b;
+										}
+
+										function easeOutElastic(t, b, c, d) {
+											var s = 1.70158;var p = 0;var a = c;
+											if (t == 0) return b;if ((t /= d) == 1) return b + c;if (!p) p = d * .3;
+											if (a < Math.abs(c)) {
+												a = c;var s = p / 4;
+											} else var s = p / (2 * Math.PI) * Math.asin(c / a);
+											return a * Math.pow(2, -10 * t) * Math.sin((t * d - s) * (2 * Math.PI) / p) + c + b;
+										}
+
+										function easeInOutElastic(t, b, c, d) {
+											var s = 1.70158;var p = 0;var a = c;
+											if (t == 0) return b;if ((t /= d / 2) == 2) return b + c;if (!p) p = d * (.3 * 1.5);
+											if (a < Math.abs(c)) {
+												a = c;var s = p / 4;
+											} else var s = p / (2 * Math.PI) * Math.asin(c / a);
+											if (t < 1) return -.5 * (a * Math.pow(2, 10 * (t -= 1)) * Math.sin((t * d - s) * (2 * Math.PI) / p)) + b;
+											return a * Math.pow(2, -10 * (t -= 1)) * Math.sin((t * d - s) * (2 * Math.PI) / p) * .5 + c + b;
+										}
+
+										function easeInBack(t, b, c, d, s) {
+											if (s == undefined) s = 1.70158;
+											return c * (t /= d) * t * ((s + 1) * t - s) + b;
+										}
+
+										function easeOutBack(t, b, c, d, s) {
+											if (s == undefined) s = 1.70158;
+											return c * ((t = t / d - 1) * t * ((s + 1) * t + s) + 1) + b;
+										}
+
+										function easeInOutBack(t, b, c, d, s) {
+											if (s == undefined) s = 1.70158;
+											if ((t /= d / 2) < 1) return c / 2 * (t * t * (((s *= 1.525) + 1) * t - s)) + b;
+											return c / 2 * ((t -= 2) * t * (((s *= 1.525) + 1) * t + s) + 2) + b;
+										}
+
+										function easeInBounce(t, b, c, d) {
+											return c - easeOutBounce(d - t, 0, c, d) + b;
+										}
+
+										function easeOutBounce(t, b, c, d) {
+											if ((t /= d) < 1 / 2.75) {
+												return c * (7.5625 * t * t) + b;
+											} else if (t < 2 / 2.75) {
+												return c * (7.5625 * (t -= 1.5 / 2.75) * t + .75) + b;
+											} else if (t < 2.5 / 2.75) {
+												return c * (7.5625 * (t -= 2.25 / 2.75) * t + .9375) + b;
+											} else {
+												return c * (7.5625 * (t -= 2.625 / 2.75) * t + .984375) + b;
+											}
+										}
+
+										function easeInOutBounce(t, b, c, d) {
+											if (t < d / 2) return easeInBounce(t * 2, 0, c, d) * .5 + b;
+											return easeOutBounce(t * 2 - d, 0, c, d) * .5 + c * .5 + b;
+										}
+
+										/***/
+									},
+									/* 4 */
+									/***/function (module, exports) {
+
+										"use strict";
+
+										Object.defineProperty(exports, "__esModule", {
+											value: true
+										});
+
+										var _extends = Object.assign || function (target) {
+											for (var i = 1; i < arguments.length; i++) {
+												var source = arguments[i];for (var key in source) {
+													if (Object.prototype.hasOwnProperty.call(source, key)) {
+														target[key] = source[key];
+													}
+												}
+											}return target;
+										};
+
+										var _createClass = function () {
+											function defineProperties(target, props) {
+												for (var i = 0; i < props.length; i++) {
+													var descriptor = props[i];descriptor.enumerable = descriptor.enumerable || false;descriptor.configurable = true;if ("value" in descriptor) descriptor.writable = true;Object.defineProperty(target, descriptor.key, descriptor);
+												}
+											}return function (Constructor, protoProps, staticProps) {
+												if (protoProps) defineProperties(Constructor.prototype, protoProps);if (staticProps) defineProperties(Constructor, staticProps);return Constructor;
+											};
+										}();
+
+										function _classCallCheck(instance, Constructor) {
+											if (!(instance instanceof Constructor)) {
+												throw new TypeError("Cannot call a class as a function");
+											}
+										}
+
+										var CubicBezier = function () {
+											_createClass(CubicBezier, null, [{
+												key: "DEFAULT_OPTIONS",
+												value: {
+													tolerance: 0.001,
+													controlPoints: [.15, .66, .83, .67],
+													destination: 1
+												},
+												enumerable: true
+											}, {
+												key: "Type",
+												value: "CubicBezier",
+												enumerable: true
+											}]);
+
+											function CubicBezier(options) {
+												_classCallCheck(this, CubicBezier);
+
+												// merge default with passed
+												this._options = _extends({}, CubicBezier.DEFAULT_OPTIONS, options);
+
+												this._x = 0;
+												this._time = 0;
+											}
+
+											_createClass(CubicBezier, [{
+												key: "step",
+												value: function step(delta) {
+													// t: current time, b: begInnIng value, c: change In value, d: duration
+													this._time += delta;
+													this._x = CubicBezier._getPointOnBezierCurve(this._options.controlPoints, this._time);
+													return this._x * this._options.destination;
+												}
+											}, {
+												key: "isFinished",
+												value: function isFinished() {
+													return this._time >= 1;
+												}
+											}], [{
+												key: "getValue",
+												value: function getValue(options, time) {
+													return CubicBezier._getPointOnBezierCurve(options.controlPoints, time);
+												}
+											}, {
+												key: "_getPointOnBezierCurve",
+												value: function _getPointOnBezierCurve(controlPoints, l) {
+													var a1 = { x: 0, y: 0 };
+													var a2 = { x: 1, y: 1 };
+
+													var c1 = { x: controlPoints[0], y: controlPoints[1] };
+													var c2 = { x: controlPoints[2], y: controlPoints[3] };
+
+													var b1 = CubicBezier._interpolate(a1, c1, l);
+													var b2 = CubicBezier._interpolate(c1, c2, l);
+													var b3 = CubicBezier._interpolate(c2, a2, l);
+
+													c1 = CubicBezier._interpolate(b1, b2, l);
+													c2 = CubicBezier._interpolate(b2, b3, l);
+
+													return CubicBezier._interpolate(c1, c2, l).y;
+												}
+											}, {
+												key: "_interpolate",
+												value: function _interpolate(p1, p2, l) {
+													var p3 = {};
+
+													p3.x = p1.x + (p2.x - p1.x) * l;
+													p3.y = p1.y + (p2.y - p1.y) * l;
+
+													return p3;
+												}
+											}]);
+
+											return CubicBezier;
+										}();
+
+										exports["default"] = CubicBezier;
+										module.exports = exports["default"];
+
+										/***/
+									},
+									/* 5 */
+									/***/function (module, exports, __webpack_require__) {
+
+										"use strict";
+
+										Object.defineProperty(exports, "__esModule", {
+											value: true
+										});
+
+										var _extends = Object.assign || function (target) {
+											for (var i = 1; i < arguments.length; i++) {
+												var source = arguments[i];for (var key in source) {
+													if (Object.prototype.hasOwnProperty.call(source, key)) {
+														target[key] = source[key];
+													}
+												}
+											}return target;
+										};
+
+										var _createClass = function () {
+											function defineProperties(target, props) {
+												for (var i = 0; i < props.length; i++) {
+													var descriptor = props[i];descriptor.enumerable = descriptor.enumerable || false;descriptor.configurable = true;if ("value" in descriptor) descriptor.writable = true;Object.defineProperty(target, descriptor.key, descriptor);
+												}
+											}return function (Constructor, protoProps, staticProps) {
+												if (protoProps) defineProperties(Constructor.prototype, protoProps);if (staticProps) defineProperties(Constructor, staticProps);return Constructor;
+											};
+										}();
+
+										function _interopRequireWildcard(obj) {
+											if (obj && obj.__esModule) {
+												return obj;
+											} else {
+												var newObj = {};if (obj != null) {
+													for (var key in obj) {
+														if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key];
+													}
+												}newObj["default"] = obj;return newObj;
+											}
+										}
+
+										function _classCallCheck(instance, Constructor) {
+											if (!(instance instanceof Constructor)) {
+												throw new TypeError("Cannot call a class as a function");
+											}
+										}
+
+										var _Easing = __webpack_require__(3);
+
+										var Easing = _interopRequireWildcard(_Easing);
+
+										var Ease = function () {
+											_createClass(Ease, null, [{
+												key: "DEFAULT_OPTIONS",
+												value: {
+													tolerance: 0.001,
+													easingFunction: Easing.easeOutQuad,
+													destination: 1
+												},
+												enumerable: true
+											}, {
+												key: "Type",
+												value: "Ease",
+												enumerable: true
+											}]);
+
+											function Ease(options) {
+												_classCallCheck(this, Ease);
+
+												// merge default with passed
+												this._options = _extends({}, Ease.DEFAULT_OPTIONS, options);
+
+												this._x = 0;
+												this._time = 0;
+											}
+
+											_createClass(Ease, [{
+												key: "step",
+												value: function step(delta) {
+													// t: current time, b: begInnIng value, c: change In value, d: duration
+													this._time += delta;
+													this._x = this._options.easingFunction(this._time, 0, 1, 1);
+													return this._x * this._options.destination;
+												}
+											}, {
+												key: "isFinished",
+												value: function isFinished() {
+													return this._time >= 1;
+												}
+											}], [{
+												key: "getValue",
+												value: function getValue(options, time) {
+													return options.easingFunction(time, 0, 1, 1);
+												}
+											}]);
+
+											return Ease;
+										}();
+
+										exports["default"] = Ease;
+										module.exports = exports["default"];
+
+										/***/
+									},
+									/* 6 */
+									/***/function (module, exports) {
+
+										"use strict";
+
+										Object.defineProperty(exports, "__esModule", {
+											value: true
+										});
+
+										var _extends = Object.assign || function (target) {
+											for (var i = 1; i < arguments.length; i++) {
+												var source = arguments[i];for (var key in source) {
+													if (Object.prototype.hasOwnProperty.call(source, key)) {
+														target[key] = source[key];
+													}
+												}
+											}return target;
+										};
+
+										var _createClass = function () {
+											function defineProperties(target, props) {
+												for (var i = 0; i < props.length; i++) {
+													var descriptor = props[i];descriptor.enumerable = descriptor.enumerable || false;descriptor.configurable = true;if ("value" in descriptor) descriptor.writable = true;Object.defineProperty(target, descriptor.key, descriptor);
+												}
+											}return function (Constructor, protoProps, staticProps) {
+												if (protoProps) defineProperties(Constructor.prototype, protoProps);if (staticProps) defineProperties(Constructor, staticProps);return Constructor;
+											};
+										}();
+
+										function _classCallCheck(instance, Constructor) {
+											if (!(instance instanceof Constructor)) {
+												throw new TypeError("Cannot call a class as a function");
+											}
+										}
+
+										var Friction = function () {
+											_createClass(Friction, null, [{
+												key: "DEFAULT_OPTIONS",
+												value: {
+													applyAcceleration: function applyAcceleration(accel) {
+														return accel;
+													},
+													friction: 0.1,
+													destination: 1,
+													tolerance: 0.001
+												},
+												enumerable: true
+											}, {
+												key: "Type",
+												value: "FRICTION",
+												enumerable: true
+											}]);
+
+											function Friction(options) {
+												_classCallCheck(this, Friction);
+
+												// merge default with passed
+												this._options = _extends({}, Friction.DEFAULT_OPTIONS, options);
+												this._v = 0;
+												this._x = 0;
+												this._acceleration = (this._options.destination - this._x) * this._options.friction;
+												this._previousX = 0;
+											}
+
+											_createClass(Friction, [{
+												key: "step",
+												value: function step(delta) {
+													// delta is ignored in the FrictionAnimator
+													this._acceleration = this._options.applyAcceleration(this._acceleration);
+
+													this._v += this._acceleration;
+													this._x += this._v;
+													this._v *= 1 - this._options.friction;
+
+													// reset the acceleration as this is set initially
+													this._acceleration = 0;
+													this._previousX = this._x;
+
+													return this._x;
+												}
+											}, {
+												key: "isFinished",
+												value: function isFinished() {
+													return Math.round(this._v / this._options.tolerance) === 0 && Math.round(this._x / this._options.tolerance) === this._options.destination / this._options.tolerance ? true : false;
+												}
+											}]);
+
+											return Friction;
+										}();
+
+										exports["default"] = Friction;
+										module.exports = exports["default"];
+
+										/***/
+									},
+									/* 7 */
+									/***/function (module, exports) {
+
+										"use strict";
+
+										Object.defineProperty(exports, "__esModule", {
+											value: true
+										});
+
+										var _extends = Object.assign || function (target) {
+											for (var i = 1; i < arguments.length; i++) {
+												var source = arguments[i];for (var key in source) {
+													if (Object.prototype.hasOwnProperty.call(source, key)) {
+														target[key] = source[key];
+													}
+												}
+											}return target;
+										};
+
+										var _createClass = function () {
+											function defineProperties(target, props) {
+												for (var i = 0; i < props.length; i++) {
+													var descriptor = props[i];descriptor.enumerable = descriptor.enumerable || false;descriptor.configurable = true;if ("value" in descriptor) descriptor.writable = true;Object.defineProperty(target, descriptor.key, descriptor);
+												}
+											}return function (Constructor, protoProps, staticProps) {
+												if (protoProps) defineProperties(Constructor.prototype, protoProps);if (staticProps) defineProperties(Constructor, staticProps);return Constructor;
+											};
+										}();
+
+										function _classCallCheck(instance, Constructor) {
+											if (!(instance instanceof Constructor)) {
+												throw new TypeError("Cannot call a class as a function");
+											}
+										}
+
+										var Spring = function () {
+											_createClass(Spring, null, [{
+												key: "DEFAULT_OPTIONS",
+												value: {
+													stiffness: 100,
+													damping: 20,
+													tolerance: 0.001,
+													destination: 1
+												},
+												enumerable: true
+											}, {
+												key: "Type",
+												value: "SPRING",
+												enumerable: true
+											}]);
+
+											function Spring(options) {
+												_classCallCheck(this, Spring);
+
+												// merge default with passed
+												this._options = _extends({}, Spring.DEFAULT_OPTIONS, options);
+
+												this._v = 0;
+												this._x = 0;
+											}
+
+											_createClass(Spring, [{
+												key: "step",
+												value: function step(delta) {
+													var k = 0 - this._options.stiffness;
+													var b = 0 - this._options.damping;
+
+													var F_spring = k * (this._x - 1);
+													var F_damper = b * this._v;
+
+													var mass = 1;
+
+													this._v += (F_spring + F_damper) / mass * delta;
+													this._x += this._v * delta;
+
+													return this._x * this._options.destination;
+												}
+											}, {
+												key: "isFinished",
+												value: function isFinished() {
+													return Math.round(this._v / this._options.tolerance) === 0 && Math.round(this._x / this._options.tolerance) === this._options.destination / this._options.tolerance ? true : false;
+												}
+											}]);
+
+											return Spring;
+										}();
+
+										exports["default"] = Spring;
+										module.exports = exports["default"];
+
+										/***/
+									},
+									/* 8 */
+									/***/function (module, exports) {
+
+										// r4k from http://mtdevans.com/2013/05/fourth-order-runge-kutta-algorithm-in-javascript-with-demo/
+										"use strict";
+
+										Object.defineProperty(exports, "__esModule", {
+											value: true
+										});
+
+										var _extends = Object.assign || function (target) {
+											for (var i = 1; i < arguments.length; i++) {
+												var source = arguments[i];for (var key in source) {
+													if (Object.prototype.hasOwnProperty.call(source, key)) {
+														target[key] = source[key];
+													}
+												}
+											}return target;
+										};
+
+										var _createClass = function () {
+											function defineProperties(target, props) {
+												for (var i = 0; i < props.length; i++) {
+													var descriptor = props[i];descriptor.enumerable = descriptor.enumerable || false;descriptor.configurable = true;if ("value" in descriptor) descriptor.writable = true;Object.defineProperty(target, descriptor.key, descriptor);
+												}
+											}return function (Constructor, protoProps, staticProps) {
+												if (protoProps) defineProperties(Constructor.prototype, protoProps);if (staticProps) defineProperties(Constructor, staticProps);return Constructor;
+											};
+										}();
+
+										function _classCallCheck(instance, Constructor) {
+											if (!(instance instanceof Constructor)) {
+												throw new TypeError("Cannot call a class as a function");
+											}
+										}
+
+										var SpringRK4 = function () {
+											_createClass(SpringRK4, null, [{
+												key: "DEFAULT_OPTIONS",
+												value: {
+													stiffness: 100,
+													damping: 20,
+													tolerance: 0.001,
+													x: 1,
+													v: 0,
+													destination: 1,
+													origin: 0
+												},
+												enumerable: true
+											}, {
+												key: "Type",
+												value: "SPRINGRK4",
+												enumerable: true
+											}]);
+
+											function SpringRK4(options) {
+												_classCallCheck(this, SpringRK4);
+
+												// merge default with passed
+												this._options = _extends({}, SpringRK4.DEFAULT_OPTIONS, options);
+
+												this._state = {
+													x: this._options.destination - this._options.origin,
+													v: this._options.v
+												};
+											}
+
+											_createClass(SpringRK4, [{
+												key: "_rk4",
+												value: function _rk4(state, a, dt) {
+													var x = state.x;
+													var v = state.v;
+													// Returns final (position, velocity) array after time dt has passed.
+													//        x: initial position
+													//        v: initial velocity
+													//        a: acceleration function a(x,v,dt) (must be callable)
+													//        dt: timestep
+													var x1 = x;
+													var v1 = v;
+													var a1 = a(x1, v1, 0);
+
+													var x2 = x + 0.5 * v1 * dt;
+													var v2 = v + 0.5 * a1 * dt;
+													var a2 = a(x2, v2, dt / 2);
+
+													var x3 = x + 0.5 * v2 * dt;
+													var v3 = v + 0.5 * a2 * dt;
+													var a3 = a(x3, v3, dt / 2);
+
+													var x4 = x + v3 * dt;
+													var v4 = v + a3 * dt;
+													var a4 = a(x4, v4, dt);
+
+													var xf = x + dt / 6 * (v1 + 2 * v2 + 2 * v3 + v4);
+													var vf = v + dt / 6 * (a1 + 2 * a2 + 2 * a3 + a4);
+
+													return {
+														x: xf,
+														v: vf
+													};
+												}
+											}, {
+												key: "_acceleration",
+												value: function _acceleration(x, v, dt) {
+													// This particular one models a spring with a 1kg mass
+													return -this._options.stiffness * x - this._options.damping * v;
+												}
+											}, {
+												key: "step",
+												value: function step(delta) {
+													this._state = this._rk4(this._state, this._acceleration.bind(this), delta);
+
+													return this.x;
+												}
+											}, {
+												key: "isFinished",
+												value: function isFinished() {
+													return Math.round(this._state.v / this._options.tolerance) === 0 && Math.round(this._state.x / this._options.tolerance) === 0 ? true : false;
+												}
+											}, {
+												key: "v",
+												set: function set(v) {
+													this._state.v = v;
+												}
+											}, {
+												key: "x",
+												set: function set(x) {
+													this._state.x = x;
+												},
+												get: function get() {
+													return this._options.destination - this._options.origin - this._state.x + this._options.origin;;
+												}
+											}, {
+												key: "destination",
+												set: function set(destination) {
+													this._options.destination = destination;
+													this._state.x = this._options.destination - this._options.origin;
+												}
+											}, {
+												key: "origin",
+												set: function set(origin) {
+													this._options.origin = origin;
+													this._state.x = this._options.destination - this._options.origin;
+												}
+											}]);
+
+											return SpringRK4;
+										}();
+
+										exports["default"] = SpringRK4;
+										module.exports = exports["default"];
+
+										/***/
+									}
+									/******/])
+								);
+							});
+							;
+
+							/***/
+						},
+						/* 5 */
+						/***/function (module, exports) {
+
+							"use strict";
+
+							Object.defineProperty(exports, "__esModule", {
+								value: true
+							});
+
+							var _extends = Object.assign || function (target) {
+								for (var i = 1; i < arguments.length; i++) {
+									var source = arguments[i];for (var key in source) {
+										if (Object.prototype.hasOwnProperty.call(source, key)) {
+											target[key] = source[key];
+										}
+									}
+								}return target;
+							};
+
+							var _createClass = function () {
+								function defineProperties(target, props) {
+									for (var i = 0; i < props.length; i++) {
+										var descriptor = props[i];descriptor.enumerable = descriptor.enumerable || false;descriptor.configurable = true;if ("value" in descriptor) descriptor.writable = true;Object.defineProperty(target, descriptor.key, descriptor);
+									}
+								}return function (Constructor, protoProps, staticProps) {
+									if (protoProps) defineProperties(Constructor.prototype, protoProps);if (staticProps) defineProperties(Constructor, staticProps);return Constructor;
+								};
+							}();
+
+							function _classCallCheck(instance, Constructor) {
+								if (!(instance instanceof Constructor)) {
+									throw new TypeError("Cannot call a class as a function");
+								}
+							}
+
+							var _DEFAULT_OPTIONS = {
+								loop: false,
+								in: 0,
+								out: null,
+								fillMode: 0
+							};
+
+							var TimelineAbstract = function () {
+								function TimelineAbstract(name, options) {
+									_classCallCheck(this, TimelineAbstract);
+
+									this._options = null;
+									this._name = null;
+
+									this._init(name, options);
+								}
+
+								/*________________________________________________________
+	       	PUBLIC CLASS METHODS
+	       ________________________________________________________*/
+
+								_createClass(TimelineAbstract, [{
+									key: "getState",
+									value: function getState(time) {
+										return this._getState(time);
+									}
+								}, {
+									key: "_init",
+
+									/*________________________________________________________
+	        	PRIVATE CLASS METHODS
+	        ________________________________________________________*/
+
+									value: function _init(name, options) {
+
+										this._validateOptions(options);
+
+										this._options = _extends({}, _DEFAULT_OPTIONS, options);
+
+										this._name = name;
+									}
+								}, {
+									key: "_validateOptions",
+									value: function _validateOptions(options) {}
+								}, {
+									key: "_getState",
+									value: function _getState(time) {}
+
+									/**
+	         * Method iterates through keyframes for each property and determines our relative duration between in and out
+	         *
+	         * @private
+	         */
+
+								}, {
+									key: "_updateRelativeDuration",
+									value: function _updateRelativeDuration(absoluteDuration) {
+										var inIndex = -1;
+										var duration = absoluteDuration;
+
+										if (this._options.in == null) {
+											this._options.in = 0;
+										} else {
+											// adjust the duration
+											if (this._options.in > duration) {
+												throw Error("In point is set beyond the end of the tween!");
+											}
+											duration -= this._options.in;
+										}
+
+										if (this._options.out != null) {
+											duration = this._options.out - this._options.in;
+										} else {
+											this._options.out = this._options.in + duration;
+										}
+
+										this._duration = duration;
+
+										if (this._options.in > this._options.out) {
+											throw Error("tween in is greater than out!");
+										}
+									}
+
+									/**
+	         * Method takes any time and wraps it accordingly to be within in and out points
+	         *
+	         * @private
+	         * @param {Number} time Time in milisecond
+	         * @return Number
+	         */
+
+								}, {
+									key: "_loopTime",
+									value: function _loopTime(time) {
+										return ((time - this._options.in) % this._duration + this._duration) % this._duration;
+									}
+
+									/**
+	         * Method takes any time and checks whether the time value requires wrapping, if so then returns wrapped time
+	         *
+	         * @private
+	         * @param {Number} time Time in milisecond
+	         * @return Number
+	         */
+
+								}, {
+									key: "_resolveTime",
+									value: function _resolveTime(time) {
+										if (time < this._options.in) {
+											if (this._options.fillMode === TimelineAbstract.FILL_MODE.BACKWARD || this._options.fillMode === TimelineAbstract.FILL_MODE.BOTH) {
+												if (this._options.loop) {
+													return this._loopTime(time);
+												}
+											}
+										}
+
+										if (time > this._options.out) {
+											if (this._options.fillMode === TimelineAbstract.FILL_MODE.FORWARD || this._options.fillMode === TimelineAbstract.FILL_MODE.BOTH) {
+												if (this._options.loop) {
+													return this._loopTime(time);
+												}
+											}
+										}
+
+										return time;
+									}
+								}, {
+									key: "duration",
+									get: function get() {
+										return this._duration;
+									}
+								}, {
+									key: "name",
+									get: function get() {
+										return this._name;
+									}
+								}, {
+									key: "in",
+									get: function get() {
+										return this._options.in;
+									}
+								}, {
+									key: "out",
+									get: function get() {
+										return this._options.out;
+									}
+								}, {
+									key: "loop",
+									get: function get() {
+										return this._options.loop;
+									}
+								}, {
+									key: "fillMode",
+									get: function get() {
+										return this._options.fillMode;
+									}
+								}]);
+
+								return TimelineAbstract;
+							}();
+
+							TimelineAbstract.FILL_MODE = {
+								NOME: 0,
+								FORWARD: 1,
+								BACKWARD: 2,
+								BOTH: 3
+							};
+							exports.default = TimelineAbstract;
+
+							/***/
+						},
+						/* 6 */
+						/***/function (module, exports, __webpack_require__) {
+
+							'use strict';
+
+							Object.defineProperty(exports, "__esModule", {
+								value: true
+							});
+
+							var _createClass = function () {
+								function defineProperties(target, props) {
+									for (var i = 0; i < props.length; i++) {
+										var descriptor = props[i];descriptor.enumerable = descriptor.enumerable || false;descriptor.configurable = true;if ("value" in descriptor) descriptor.writable = true;Object.defineProperty(target, descriptor.key, descriptor);
+									}
+								}return function (Constructor, protoProps, staticProps) {
+									if (protoProps) defineProperties(Constructor.prototype, protoProps);if (staticProps) defineProperties(Constructor, staticProps);return Constructor;
+								};
+							}();
+
+							var _timeline = __webpack_require__(1);
+
+							var _timeline2 = _interopRequireDefault(_timeline);
+
+							function _interopRequireDefault(obj) {
+								return obj && obj.__esModule ? obj : { default: obj };
+							}
+
+							function _classCallCheck(instance, Constructor) {
+								if (!(instance instanceof Constructor)) {
+									throw new TypeError("Cannot call a class as a function");
+								}
+							}
+
+							function _possibleConstructorReturn(self, call) {
+								if (!self) {
+									throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+								}return call && ((typeof call === 'undefined' ? 'undefined' : _typeof(call)) === "object" || typeof call === "function") ? call : self;
+							}
+
+							function _inherits(subClass, superClass) {
+								if (typeof superClass !== "function" && superClass !== null) {
+									throw new TypeError("Super expression must either be null or a function, not " + (typeof superClass === 'undefined' ? 'undefined' : _typeof(superClass)));
+								}subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } });if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass;
+							}
+
+							var InteractiveTimeline = function (_Timeline) {
+								_inherits(InteractiveTimeline, _Timeline);
+
+								function InteractiveTimeline(name, options) {
+									_classCallCheck(this, InteractiveTimeline);
+
+									var _this = _possibleConstructorReturn(this, Object.getPrototypeOf(InteractiveTimeline).call(this, name, options));
+
+									_this._sequences = [];
+									return _this;
+								}
+
+								/*________________________________________________________
+	       	PUBLIC CLASS METHODS
+	       ________________________________________________________*/
+
+								_createClass(InteractiveTimeline, [{
+									key: 'increment',
+									value: function increment(timeDelta) {
+										return this._increment(timeDelta);
+									}
+								}, {
+									key: 'setSequences',
+									value: function setSequences(sequences) {
+										this._setSequences(sequences);
+									}
+								}, {
+									key: 'getSequences',
+									value: function getSequences() {
+										return this._sequences;
+									}
+
+									/*________________________________________________________
+	        	PRIVATE CLASS METHODS
+	        ________________________________________________________*/
+
+								}, {
+									key: '_increment',
+									value: function _increment(timeDelta) {
+										var outDelta = void 0,
+										    sequenceOutTime = void 0;
+
+										// get current sequence
+										var currentSequence = this._getSequenceByTime(this._currentTime);
+
+										this._currentTime += timeDelta;
+
+										// get updated sequence with current time
+										var prospectiveSequence = this._getSequenceByTime(this._currentTime);
+
+										// using sequences currently only works travelling forwards
+										if (timeDelta > 0) {
+											// we only start to think about redirect if last time was within a sequence
+											if (currentSequence != null) {
+												// check to see we have left the current sequence and that the current sequence has a next location
+												if (currentSequence !== prospectiveSequence && currentSequence.next != null) {
+
+													// if there is a prospective then check that its not the next of current
+													if (prospectiveSequence != null) {
+
+														if (currentSequence.next !== prospectiveSequence.label) {
+															// if duration is set on current the outDelta should be from after the duration
+															if (currentSequence.duration) {
+																sequenceOutTime = currentSequence.time + currentSequence.duration;
+															} else {
+																// otherwise no duration set the current sequence extends to the begining of the prospective
+																sequenceOutTime = prospectiveSequence.time;
+															}
+														} else {
+															sequenceOutTime = prospectiveSequence.time;
+														}
+													} else {
+														// if prospective is null and current is not, then a duration must be set, so use that
+
+														sequenceOutTime = currentSequence.time + currentSequence.duration;
+													}
+													// this makes the assumption we have travelled forward and have moved out of the current sequence to the right,
+													// if we have move out of the sequence to the left therefore backwards the outDelta is from the end of the
+													// sequence
+													outDelta = this._currentTime - sequenceOutTime;
+													// adjust time and update current
+													prospectiveSequence = this._getSequenceByLabel(currentSequence.next);
+
+													this.currentTime = prospectiveSequence.time + outDelta;
+												}
+											}
+										}
+
+										return this._getState(this._currentTime);
+									}
+								}, {
+									key: '_setSequences',
+									value: function _setSequences(sequences) {
+										// merge sequence
+										// validate check for overlaping
+										this._sequences = sequences;
+									}
+								}, {
+									key: '_getSequenceByTime',
+									value: function _getSequenceByTime(time) {
+										var sequence = void 0;
+
+										for (var i = 0; i < this._sequences.length; i++) {
+											if (this._sequences[i].time > time) {
+												break;
+											}
+											sequence = this._sequences[i];
+										}
+
+										if (sequence) {
+											// check if time is beyond last sequence
+											if (sequence.duration && time > sequence.time + sequence.duration) {
+												return null;
+											}
+											// return the current sequence
+											return sequence;
+										}
+
+										// no relevent sequences
+										return null;
+									}
+								}, {
+									key: '_getSequenceByLabel',
+									value: function _getSequenceByLabel(label) {
+										for (var i = 0; i < this._sequences.length; i++) {
+											if (this._sequences[i].label === label) {
+												return this._sequences[i];
+											}
+										}
+									}
+								}]);
+
+								return InteractiveTimeline;
+							}(_timeline2.default);
+
+							exports.default = InteractiveTimeline;
+
+							/***/
+						}
+						/******/])
+					);
+				});
+				;
+
+				/***/
+			}
+			/******/])
+		);
+	});
+	;
+	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(4)(module)))
 
 /***/ },
 /* 79 */
 /***/ function(module, exports, __webpack_require__) {
 
-	(function webpackUniversalModuleDefinition(root, factory) {
-		if(true)
-			module.exports = factory();
-		else if(typeof define === 'function' && define.amd)
-			define([], factory);
-		else if(typeof exports === 'object')
-			exports["Timeline"] = factory();
-		else
-			root["Timeline"] = factory();
-	})(this, function() {
-	return /******/ (function(modules) { // webpackBootstrap
-	/******/ 	// The module cache
-	/******/ 	var installedModules = {};
-
-	/******/ 	// The require function
-	/******/ 	function __webpack_require__(moduleId) {
-
-	/******/ 		// Check if module is in cache
-	/******/ 		if(installedModules[moduleId])
-	/******/ 			return installedModules[moduleId].exports;
-
-	/******/ 		// Create a new module (and put it into the cache)
-	/******/ 		var module = installedModules[moduleId] = {
-	/******/ 			exports: {},
-	/******/ 			id: moduleId,
-	/******/ 			loaded: false
-	/******/ 		};
-
-	/******/ 		// Execute the module function
-	/******/ 		modules[moduleId].call(module.exports, module, module.exports, __webpack_require__);
-
-	/******/ 		// Flag the module as loaded
-	/******/ 		module.loaded = true;
-
-	/******/ 		// Return the exports of the module
-	/******/ 		return module.exports;
-	/******/ 	}
-
-
-	/******/ 	// expose the modules object (__webpack_modules__)
-	/******/ 	__webpack_require__.m = modules;
-
-	/******/ 	// expose the module cache
-	/******/ 	__webpack_require__.c = installedModules;
-
-	/******/ 	// __webpack_public_path__
-	/******/ 	__webpack_require__.p = "";
-
-	/******/ 	// Load entry module and return exports
-	/******/ 	return __webpack_require__(0);
-	/******/ })
-	/************************************************************************/
-	/******/ ([
-	/* 0 */
-	/***/ function(module, exports, __webpack_require__) {
-
-		'use strict';
-
-		Object.defineProperty(exports, '__esModule', {
-			value: true
-		});
-
-		function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { 'default': obj }; }
-
-		var _timeline = __webpack_require__(1);
-
-		var _timeline2 = _interopRequireDefault(_timeline);
-
-		var _interactiveTimeline = __webpack_require__(13);
-
-		var _interactiveTimeline2 = _interopRequireDefault(_interactiveTimeline);
-
-		var _tween = __webpack_require__(3);
-
-		var _tween2 = _interopRequireDefault(_tween);
-
-		var _motionTween = __webpack_require__(4);
-
-		var _motionTween2 = _interopRequireDefault(_motionTween);
-
-		exports.Timeline = _timeline2['default'];
-		exports.InteractiveTimeline = _interactiveTimeline2['default'];
-		exports.Tween = _tween2['default'];
-		exports.MotionTween = _motionTween2['default'];
-
-	/***/ },
-	/* 1 */
-	/***/ function(module, exports, __webpack_require__) {
-
-		'use strict';
-
-		Object.defineProperty(exports, '__esModule', {
-			value: true
-		});
-
-		var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
-
-		var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ('value' in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
-
-		var _get = function get(_x, _x2, _x3) { var _again = true; _function: while (_again) { var object = _x, property = _x2, receiver = _x3; _again = false; if (object === null) object = Function.prototype; var desc = Object.getOwnPropertyDescriptor(object, property); if (desc === undefined) { var parent = Object.getPrototypeOf(object); if (parent === null) { return undefined; } else { _x = parent; _x2 = property; _x3 = receiver; _again = true; desc = parent = undefined; continue _function; } } else if ('value' in desc) { return desc.value; } else { var getter = desc.get; if (getter === undefined) { return undefined; } return getter.call(receiver); } } };
-
-		function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { 'default': obj }; }
-
-		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError('Cannot call a class as a function'); } }
-
-		function _inherits(subClass, superClass) { if (typeof superClass !== 'function' && superClass !== null) { throw new TypeError('Super expression must either be null or a function, not ' + typeof superClass); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } }); if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass; }
-
-		var _timelineState = __webpack_require__(2);
-
-		var _timelineState2 = _interopRequireDefault(_timelineState);
-
-		var _tween = __webpack_require__(3);
-
-		var _tween2 = _interopRequireDefault(_tween);
-
-		var _TIMELINE_DEFAULT_OPTIONS = {
-			fps: 60
-		};
-
-		var _CHILD_DEFAULT_OPTIONS = {
-			fillMode: "both",
-			'in': null,
-			loop: false,
-			out: null,
-			time: null
-		};
-
-		var Timeline = (function (_Tween) {
-			_inherits(Timeline, _Tween);
-
-			_createClass(Timeline, null, [{
-				key: 'FILL_MODE',
-				value: {
-					NONE: "none",
-					FORWARD: "forward",
-					BACKWARD: "backward",
-					BOTH: "both"
-				},
-				enumerable: true
-			}]);
-
-			function Timeline(name, keyframesObject, options) {
-				_classCallCheck(this, Timeline);
-
-				_get(Object.getPrototypeOf(Timeline.prototype), 'constructor', this).call(this, name, keyframesObject, options);
-
-				this._children = [];
-				this._currentTime = 0;
-				this._options = _extends({}, _TIMELINE_DEFAULT_OPTIONS, options);
-			}
-
-			/*________________________________________________________
-		 	PUBLIC CLASS METHODS
-		 ________________________________________________________*/
-
-			_createClass(Timeline, [{
-				key: Symbol.iterator,
-				value: function value() {
-					return this;
-				}
-			}, {
-				key: 'next',
-				value: function next() {
-					return this._next();
-				}
-			}, {
-				key: 'addChild',
-				value: function addChild(child, options) {
-					this._addChild(child, options);
-				}
-			}, {
-				key: '_addChild',
-
-				/*________________________________________________________
-		  	PRIVATE CLASS METHODS
-		  ________________________________________________________*/
-
-				value: function _addChild(child, options) {
-					// clone options into settings property
-					var o = {
-						child: child,
-						settings: _extends({}, _CHILD_DEFAULT_OPTIONS, options)
-					};
-
-					// set time property if not already set
-					if (o.settings.time == null) {
-						o.settings.time = 0;
-					}
-
-					// set in property if not already set
-					if (o.settings['in'] == null) {
-						o.settings['in'] = o.settings.time;
-					}
-
-					// set out property if not already set
-					if (o.settings.out == null) {
-						o.settings.out = o.settings.time + child.duration;
-					}
-
-					this._validateChildOptions(o.settings);
-
-					this._children.push(o);
-
-					var childDuration = this._getChildrenDuration();
-
-					var localDuration = this._getKeyframesDuration();
-
-					this._duration = Math.max(childDuration, localDuration);
-				}
-			}, {
-				key: '_validateChildOptions',
-				value: function _validateChildOptions(settings) {
-					var fillModes = Object.keys(Timeline.FILL_MODE).map(function (key) {
-						return Timeline.FILL_MODE[key];
-					});
-
-					if (fillModes.indexOf(settings.fillMode) === -1) {
-						throw Error("Incorrectly set fillMode: " + settings.fillMode);
-					}
-
-					if (settings['in'] < settings.time) {
-						throw Error("The 'in' option can't preceed the 'time' option");
-					}
-
-					if (settings['in'] > settings.out) {
-						throw Error("The 'in' option can't be after the 'out' option");
-					}
-
-					if (settings.out < settings.time || settings.out < settings['in']) {
-						throw Error("The 'out' option can't preceed the 'time' or 'in' option");
-					}
-				}
-			}, {
-				key: '_removeChild',
-				value: function _removeChild() {}
-			}, {
-				key: '_getChildrenDuration',
-				value: function _getChildrenDuration() {
-					var duration = 0;
-
-					this._children.forEach(function (childObjectData, index) {
-
-						duration = Math.max(duration, childObjectData.settings.out);
-					});
-
-					return duration;
-				}
-			}, {
-				key: '_getState',
-				value: function _getState(time) {
-					var _this = this;
-
-					var state = new _timelineState2['default'](_timelineState2['default'].TYPE.TIMELINE, this._name);
-					var tweenState = undefined,
-					    resolvedTime = undefined;
-
-					// Check to see if we have specified the 'timeRemap' property,
-					// if so remap time and then obtain state
-					if (this._propertyKeyframesMap.size > 0) {
-						if (this._propertyKeyframesMap.has("timeRemap")) {
-							var keyframes = this._propertyKeyframesMap.get("timeRemap");
-
-							time = this._getTimeRemapTweenValue(keyframes, time);
-						}
-					}
-
-					this._children.forEach(function (childObjectData, index) {
-
-						// loop is accounted for here, fill is automatically built into tween
-						resolvedTime = _this._resolveChildRelativeTime(time, childObjectData.settings);
-
-						tweenState = childObjectData.child.getState(resolvedTime);
-
-						state.addChild(tweenState);
-					});
-
-					return state;
-				}
-
-				/**
-		   * Method takes any time and wraps it accordingly to be within in and out points
-		   *
-		   * @private
-		   * @param {Number} time Time in milisecond
-		   * @return Number
-		   */
-			}, {
-				key: '_loopTime',
-				value: function _loopTime(time, childSettings) {
-					var childEditDuration = childSettings.out - childSettings['in'];
-					var realativeTime = time - childSettings['in'];
-					var loopedTime = (realativeTime % childEditDuration + childEditDuration) % childEditDuration;
-					return childSettings['in'] + loopedTime;
-				}
-
-				/**
-		   * Method takes any time and checks whether the time value requires wrapping, if so then returns wrapped time
-		   *
-		   * @private
-		   * @param {Number} time Time in milisecond
-		   * @return Number
-		   */
-			}, {
-				key: '_resolveChildRelativeTime',
-				value: function _resolveChildRelativeTime(time, childSettings) {
-					// now we have the beginning position of the child we can determine the time relative to the child
-					var childRelativeTime = time - childSettings.time;
-
-					if (time < childSettings['in']) {
-						if (childSettings.fillMode === Timeline.FILL_MODE.BACKWARD || childSettings.fillMode === Timeline.FILL_MODE.BOTH) {
-
-							if (childSettings.loop) {
-								return this._loopTime(time, childSettings) - childSettings.time;
-							} else {
-								return childSettings['in'] - childSettings.time;
-							}
-						} else {
-							return undefined;
-						}
-					}
-
-					if (time > childSettings.out) {
-						if (childSettings.fillMode === Timeline.FILL_MODE.FORWARD || childSettings.fillMode === Timeline.FILL_MODE.BOTH) {
-							if (childSettings.loop) {
-								return this._loopTime(time, childSettings) - childSettings.time;
-							} else {
-								return childSettings.out - childSettings.time;
-							}
-						} else {
-							return undefined;
-						}
-					}
-
-					return childRelativeTime;
-				}
-
-				/**
-		   * Method takes an array of timeRemap Keyframes and time and returns the tweened time at that time
-		   *
-		   * @private
-		   * @param {Array} keyframes Array of keyframe objects with time and value properties.
-		   * @param {Number} time Time in milisecond
-		   * @return Number
-		   */
-			}, {
-				key: '_getTimeRemapTweenValue',
-				value: function _getTimeRemapTweenValue(keyframes, time) {
-					var value = null;
-					// interate over keyframes untill we find the exact value or keyframes either side
-					var length = keyframes.length;
-					var keyframe = undefined,
-					    keyframeValue = undefined;
-					var lastKeyframe = undefined;
-
-					// the aim here is to find the keyframe to either side of the time value
-
-					var previousKeyframe = null;
-					var nextKeyframe = null;
-
-					for (var i = 0; i < length; i++) {
-						keyframe = keyframes[i];
-						keyframeValue = keyframe.value;
-
-						if (time === keyframe.time) {
-							return keyframe.value;
-						} else if (time > keyframe.time) {
-							previousKeyframe = keyframe;
-							// no need to break here as we continue iterating through keyFrames to find the keyframe just previous to the time value
-						} else if (time < keyframe.time) {
-								nextKeyframe = keyframe;
-								break; // break here has we have gone far enough to get the next keyFrame
-							}
-					}
-
-					if (previousKeyframe == null && nextKeyframe == null) {
-						return value;
-					}
-
-					if (previousKeyframe == null) {
-						// when we have no previouskeyframe the natural behaviour differs from standard tween keyframes,
-						// instead of gleening the next keyframe value, we want to determine the time relative to the
-						// time remaped at the nextKeyframe value. Look at the example below
-
-						// nextKeyframe.time = 50
-						// nextKeyframe.value = 25
-						// time = 30
-						// value = nextKeyframe.value - (nextKeyframe.time - time) // ergo 5
-
-						return nextKeyframe.value - (nextKeyframe.time - time);
-					}
-
-					if (nextKeyframe == null) {
-
-						// see above reasoning
-
-						// previousKeyframe.time = 50
-						// previousKeyframe.value = 25
-						// time = 70
-						// value = previousKeyframe.value - (previousKeyframe.time - time) // ergo 45
-
-						return previousKeyframe.value - (previousKeyframe.time - time);
-					}
-
-					if (previousKeyframe != null && nextKeyframe != null) {
-						// check for a hold keyframe
-						if (previousKeyframe.hold != null && previousKeyframe.hold === true) {
-							return previousKeyframe.value;
-						}
-
-						value = this._tweenBetweenKeyframes(previousKeyframe, nextKeyframe, time);
-					}
-
-					return value;
-				}
-			}, {
-				key: '_next',
-				value: function _next() {
-					var time = this._currentTime;
-
-					this._currentTime += 1000 / this._options.fps;
-
-					var done = time >= this._duration;
-
-					if (done) {
-						this._currentTime = 0;
-						return { done: done };
-					} else {
-						return {
-							value: this._getState(time)
-						};
-					}
-				}
-			}, {
-				key: 'currentTime',
-				set: function set(time) {
-					this._currentTime = time;
-				},
-				get: function get() {
-					return this._currentTime;
-				}
-			}, {
-				key: 'duration',
-				get: function get() {
-					return this._duration;
-				}
-			}]);
-
-			return Timeline;
-		})(_tween2['default']);
-
-		exports['default'] = Timeline;
-		module.exports = exports['default'];
-
-	/***/ },
-	/* 2 */
-	/***/ function(module, exports) {
-
-		"use strict";
-
-		Object.defineProperty(exports, "__esModule", {
-			value: true
-		});
-
-		var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
-
-		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
-
-		var TimelineState = (function () {
-			_createClass(TimelineState, null, [{
-				key: "TYPE",
-				value: {
-					TWEEN: "tween",
-					TIMELINE: "timeline"
-				},
-				enumerable: true
-			}]);
-
-			function TimelineState(type, name) {
-				_classCallCheck(this, TimelineState);
-
-				this._type = TimelineState.TYPE.TWEEN;
-				this._children = null;
-				this._properties = null;
-				this._name = null;
-
-				this._type = type;
-				this._name = name;
-
-				this._properties = {};
-
-				if (this._type == TimelineState.TYPE.TIMELINE) {
-					this._children = [];
-				}
-			}
-
-			_createClass(TimelineState, [{
-				key: "addProperty",
-				value: function addProperty(key, value) {
-					this._properties[key] = value;
-				}
-			}, {
-				key: "addChild",
-				value: function addChild(timelineStateInstance) {
-					this._children.push(timelineStateInstance);
-				}
-			}, {
-				key: "type",
-				get: function get() {
-					return this._type;
-				}
-			}, {
-				key: "name",
-				get: function get() {
-					return this._name;
-				}
-			}, {
-				key: "children",
-				get: function get() {
-					// if (this._type !== TimelineState.TYPE.TIMELINE) {
-					// 	throw Error("TimelineState instance is not of type Timeline and there does not have children!");
-					// }
-					return this._children;
-				}
-			}, {
-				key: "properties",
-				get: function get() {
-					// if (this._type !== TimelineState.TYPE.TWEEN) {
-					// 	throw Error("TimelineState instance is not of type Tween and there does not have properties!");
-					// }
-					return this._properties;
-				}
-			}]);
-
-			return TimelineState;
-		})();
-
-		exports["default"] = TimelineState;
-		module.exports = exports["default"];
-
-	/***/ },
-	/* 3 */
-	/***/ function(module, exports, __webpack_require__) {
-
-		'use strict';
-
-		Object.defineProperty(exports, '__esModule', {
-			value: true
-		});
-
-		var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
-
-		var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ('value' in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
-
-		function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { 'default': obj }; }
-
-		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError('Cannot call a class as a function'); } }
-
-		var _motionTween = __webpack_require__(4);
-
-		var _motionTween2 = _interopRequireDefault(_motionTween);
-
-		var _timelineState = __webpack_require__(2);
-
-		var _timelineState2 = _interopRequireDefault(_timelineState);
-
-		var _timelineAbstract = __webpack_require__(12);
-
-		var _timelineAbstract2 = _interopRequireDefault(_timelineAbstract);
-
-		var Tween = (function () {
-			function Tween(name, keyframesObject) {
-				_classCallCheck(this, Tween);
-
-				this._propertyKeyframesMap = null;
-				this._options = null;
-				this._name = null;
-				this._duration = 0;
-
-				this._init(name, keyframesObject);
-			}
-
-			/*________________________________________________________
-		 	PUBLIC CLASS METHODS
-		 ________________________________________________________*/
-
-			_createClass(Tween, [{
-				key: 'addKeyframes',
-				value: function addKeyframes(keyframesObject) {
-					this._addKeyframes(keyframesObject);
-				}
-			}, {
-				key: 'getState',
-				value: function getState(time) {
-					return this._getState(time);
-				}
-			}, {
-				key: '_init',
-
-				/*________________________________________________________
-		  	PRIVATE CLASS METHODS
-		  ________________________________________________________*/
-
-				value: function _init(name, keyframesObject) {
-
-					if (name == null) {
-						throw Error("Name not specified");
-					}
-
-					this._name = name;
-
-					this._propertyKeyframesMap = new Map();
-
-					if (keyframesObject != null) {
-						this._addKeyframes(keyframesObject);
-					}
-				}
-			}, {
-				key: '_addKeyframes',
-				value: function _addKeyframes(keyframesObject) {
-					var _this = this;
-
-					var keyframes = undefined;
-
-					Object.keys(keyframesObject).map(function (key, index) {
-
-						keyframes = _this._cloneKeyframes(keyframesObject[key]);
-
-						_this._propertyKeyframesMap.set(key, keyframes);
-					});
-
-					this._duration = this._getKeyframesDuration();
-				}
-
-				/**
-		   * Method clones the array of keyframes
-		   *
-		   * @private
-		   * @param {Array} keyframes An Array of keyframe objects
-		   * @returns Array
-		   */
-			}, {
-				key: '_cloneKeyframes',
-				value: function _cloneKeyframes(keyframes) {
-					var keyframesCloned = keyframes.map(function (keyframe) {
-						return _extends({}, keyframe);
-					});
-
-					return keyframesCloned;
-				}
-			}, {
-				key: '_getKeyframesDuration',
-				value: function _getKeyframesDuration() {
-					var duration = 0;
-					// the durationdetermined here is relative to the entire tween, yet to be clipped by in and out
-					this._propertyKeyframesMap.forEach(function (keyframes, key) {
-						keyframes.forEach(function (keyframe, index) {
-							duration = Math.max(duration, keyframe.time);
-						});
-					});
-
-					return duration;
-				}
-
-				/**
-		   * Method calculates and returns the values for each property at the given time
-		   *
-		   * @private
-		   * @param {Number} time Time in milisecond
-		   * @return Object
-		   */
-			}, {
-				key: '_getState',
-				value: function _getState(time) {
-					var _this2 = this;
-
-					var state = new _timelineState2['default'](_timelineState2['default'].TYPE.TWEEN, this._name);
-
-					this._propertyKeyframesMap.forEach(function (keyframes, property) {
-
-						state.addProperty(property, _this2._getTweenValue(keyframes, time));
-					});
-
-					return state;
-				}
-
-				/**
-		   * Method takes an array of Keyframes and time and returns the tweened value at that time
-		   *
-		   * @private
-		   * @param {Array} keyframes Array of keyframe objects with time and value properties.
-		   * @param {Number} time Time in milisecond
-		   * @return Number
-		   */
-			}, {
-				key: '_getTweenValue',
-				value: function _getTweenValue(keyframes, time) {
-					var value = null;
-					// interate over keyframes untill we find the exact value or keyframes either side
-					var length = keyframes.length;
-					var keyframe = undefined,
-					    keyframeValue = undefined;
-					var lastKeyframe = undefined;
-
-					// the aim here is to find the keyframe to either side of the time value
-
-					var previousKeyframe = null;
-					var nextKeyframe = null;
-
-					for (var i = 0; i < length; i++) {
-						keyframe = keyframes[i];
-						keyframeValue = keyframe.value;
-
-						if (time === keyframe.time) {
-							return keyframe.value;
-						} else if (time > keyframe.time) {
-							previousKeyframe = keyframe;
-							// no need to break here as we continue iterating through keyFrames to find the keyframe just previous to the time value
-						} else if (time < keyframe.time) {
-								nextKeyframe = keyframe;
-								break; // break here has we have gone far enough to get the next keyFrame
-							}
-					}
-
-					if (previousKeyframe == null && nextKeyframe == null) {
-						return value;
-					}
-
-					if (previousKeyframe == null) {
-						return nextKeyframe.value;
-					}
-
-					if (nextKeyframe == null) {
-						return previousKeyframe.value;
-					}
-
-					if (previousKeyframe != null && nextKeyframe != null) {
-						// check for a hold keyframe
-						if (previousKeyframe.hold != null && previousKeyframe.hold === true) {
-							return previousKeyframe.value;
-						}
-
-						value = this._tweenBetweenKeyframes(previousKeyframe, nextKeyframe, time);
-					}
-
-					return value;
-				}
-
-				/**
-		  * Method calculates the value between two keyframes
-		  *
-		  * @private
-		  * @param {Object} lastKeyframe left keyframe object
-		  * @param {Object} keyframe right keyframe object
-		  * @param {Number} time Time in milisecond
-		  * @return Number
-		  */
-			}, {
-				key: '_tweenBetweenKeyframes',
-				value: function _tweenBetweenKeyframes(lastKeyframe, keyframe, time) {
-					// time difference between keyframes
-					var timeDifference = keyframe.time - lastKeyframe.time;
-					// percentage float 0-1 of time through difference
-					var deltaFloat = (time - lastKeyframe.time) / timeDifference;
-
-					var easedDelta = deltaFloat;
-
-					if (lastKeyframe.animatorType != null) {
-						var animatorOptions = {};
-						if (lastKeyframe.animatorOptions != null) {
-							animatorOptions = _extends({}, animatorOptions, lastKeyframe.animatorOptions);
-						}
-
-						easedDelta = _motionTween2['default'].getValue(lastKeyframe.animatorType, animatorOptions, deltaFloat);
-					}
-
-					var valueDifference = keyframe.value - lastKeyframe.value;
-					var tweenedValue = lastKeyframe.value + valueDifference * easedDelta;
-
-					return tweenedValue;
-				}
-			}, {
-				key: 'duration',
-				get: function get() {
-					return this._duration;
-				}
-			}, {
-				key: 'name',
-				get: function get() {
-					return this._name;
-				}
-			}]);
-
-			return Tween;
-		})();
-
-		exports['default'] = Tween;
-		module.exports = exports['default'];
-
-	/***/ },
-	/* 4 */
-	/***/ function(module, exports, __webpack_require__) {
-
-		"use strict";
-
-		Object.defineProperty(exports, "__esModule", {
-		  value: true
-		});
-
-		var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
-
-		function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key]; } } newObj["default"] = obj; return newObj; } }
-
-		function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { "default": obj }; }
-
-		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
-
-		var _Utils = __webpack_require__(5);
-
-		var _Utils2 = _interopRequireDefault(_Utils);
-
-		var _Easing = __webpack_require__(6);
-
-		var Easing = _interopRequireWildcard(_Easing);
-
-		var _animatorsCubicBezier = __webpack_require__(7);
-
-		var _animatorsCubicBezier2 = _interopRequireDefault(_animatorsCubicBezier);
-
-		var _animatorsEase = __webpack_require__(8);
-
-		var _animatorsEase2 = _interopRequireDefault(_animatorsEase);
-
-		var _animatorsFriction = __webpack_require__(9);
-
-		var _animatorsFriction2 = _interopRequireDefault(_animatorsFriction);
-
-		var _animatorsSpring = __webpack_require__(10);
-
-		var _animatorsSpring2 = _interopRequireDefault(_animatorsSpring);
-
-		var _animatorsSpringRK4 = __webpack_require__(11);
-
-		var _animatorsSpringRK42 = _interopRequireDefault(_animatorsSpringRK4);
-
-		var MotionTween = (function () {
-		  _createClass(MotionTween, null, [{
-		    key: "DEFAULT_OPTIONS",
-		    value: {
-		      time: 1000,
-		      startValue: 0,
-		      endValue: 1,
-		      animatorType: _animatorsFriction2["default"].Type,
-		      animatorOptions: null, // use defaults of selected type
-		      update: function update() {},
-		      complete: function complete() {}
-		    },
-		    enumerable: true
-		  }, {
-		    key: "easingFunction",
-		    value: {
-		      easeInQuad: Easing.easeInQuad,
-		      easeOutQuad: Easing.easeOutQuad,
-		      easeInOutQuad: Easing.easeInOutQuad,
-		      swing: Easing.swing,
-		      easeInCubic: Easing.easeInCubic,
-		      easeOutCubic: Easing.easeOutCubic,
-		      easeInOutCubic: Easing.easeInOutCubic,
-		      easeInQuart: Easing.easeInQuart,
-		      easeOutQuart: Easing.easeOutQuart,
-		      easeInOutQuart: Easing.easeInOutQuart,
-		      easeInQuint: Easing.easeInQuint,
-		      easeOutQuint: Easing.easeOutQuint,
-		      easeInOutQuint: Easing.easeInOutQuint,
-		      easeInSine: Easing.easeInSine,
-		      easeOutSine: Easing.easeOutSine,
-		      easeInOutSine: Easing.easeInOutSine,
-		      easeInExpo: Easing.easeInExpo,
-		      easeOutExpo: Easing.easeOutExpo,
-		      easeInOutExpo: Easing.easeInOutExpo,
-		      easeInCirc: Easing.easeInCirc,
-		      easeOutCirc: Easing.easeOutCirc,
-		      easeInOutCirc: Easing.easeInOutCirc,
-		      easeInElastic: Easing.easeInElastic,
-		      easeOutElastic: Easing.easeOutElastic,
-		      easeInOutElastic: Easing.easeInOutElastic,
-		      easeInBack: Easing.easeInBack,
-		      easeOutBack: Easing.easeOutBack,
-		      easeInOutBack: Easing.easeInOutBack,
-		      easeInBounce: Easing.easeInBounce,
-		      easeOutBounce: Easing.easeOutBounce,
-		      easeInOutBounce: Easing.easeInOutBounce
-		    },
-		    enumerable: true
-		  }, {
-		    key: "animatorType",
-		    value: {
-		      spring: _animatorsSpring2["default"].Type,
-		      springRK4: _animatorsSpringRK42["default"].Type,
-		      friction: _animatorsFriction2["default"].Type,
-		      ease: _animatorsEase2["default"].Type,
-		      cubicBezier: _animatorsCubicBezier2["default"].Type
-		    },
-		    enumerable: true
-		  }]);
-
-		  function MotionTween(options) {
-		    _classCallCheck(this, MotionTween);
-
-		    this._time = null;
-		    this._startX = null;
-		    this._endX = null;
-		    this._lastTime = null;
-		    this._startTime = null;
-		    this._options = {};
-		    this._isAnimating = false;
-		    this._animator = null;
-		    this._x = null;
-
-		    this._init(options);
-		    return this;
-		  }
-
-		  _createClass(MotionTween, [{
-		    key: "start",
-		    value: function start() {
-		      this._start();
-		    }
-		  }, {
-		    key: "destroy",
-		    value: function destroy() {
-		      this._destroy();
-		    }
-		  }, {
-		    key: "_init",
-		    value: function _init(options) {
-		      // Deep merge of default and incoming options
-		      _Utils2["default"].extend(this._options, MotionTween.DEFAULT_OPTIONS, true);
-		      _Utils2["default"].extend(this._options, options, true);
-
-		      // time we can ignore for some of the animators
-		      this._time = this._options.time;
-		      this._startX = this._options.startValue;
-		      this._endX = this._options.endValue;
-		    }
-		  }, {
-		    key: "_start",
-		    value: function _start() {
-		      this._lastTime = 0;
-		      this._startTime = 0;
-
-		      switch (this._options.animatorType) {
-		        case _animatorsSpring2["default"].Type:
-		          this._animator = new _animatorsSpring2["default"](this._options.animatorOptions);
-		          break;
-		        case _animatorsSpringRK42["default"].Type:
-		          this._animator = new _animatorsSpringRK42["default"](this._options.animatorOptions);
-		          break;
-		        case _animatorsFriction2["default"].Type:
-		          this._animator = new _animatorsFriction2["default"](this._options.animatorOptions);
-		          break;
-		        case _animatorsCubicBezier2["default"].Type:
-		          this._animator = new _animatorsCubicBezier2["default"](this._options.animatorOptions);
-		          break;
-		        default:
-		          this._animator = new _animatorsEase2["default"](this._options.animatorOptions);
-		      }
-
-		      this._isAnimating = true;
-		      this._startTime = this._lastTime = new Date().getTime();
-
-		      this._requestionAnimationFrameID = window.requestAnimationFrame(this._tick.bind(this));
-		    }
-		  }, {
-		    key: "_destroy",
-		    value: function _destroy() {
-		      window.cancelAnimationFrame(this._requestionAnimationFrameID);
-		      this._options = null;
-		    }
-		  }, {
-		    key: "_tick",
-		    value: function _tick() {
-		      var now = new Date().getTime();
-
-		      var delta = (now - this._lastTime) / this._time;
-		      this._lastTime = now;
-
-		      // pass in normalised delta
-		      var normalisedAnimatedX = this._animator.step(delta);
-
-		      if (this._animator.isFinished() === false) {
-		        this._x = this._startX + (this._endX - this._startX) * normalisedAnimatedX;
-		        this._options.update(this._x);
-		        this._requestionAnimationFrameID = window.requestAnimationFrame(this._tick.bind(this));
-		      } else {
-		        this._x = this._endX;
-		        this._options.update(this._x);
-		        this._options.complete();
-		        this._isAnimating = false;
-		      }
-		    }
-		  }], [{
-		    key: "getValue",
-		    value: function getValue(animatorType, animatorOptions, time) {
-		      return MotionTween._getValue(animatorType, animatorOptions, time);
-		    }
-		  }, {
-		    key: "_getValue",
-		    value: function _getValue(animatorType, animatorOptions, time) {
-		      switch (animatorType) {
-		        case _animatorsCubicBezier2["default"].Type:
-		          return _animatorsCubicBezier2["default"].getValue(animatorOptions, time);
-		          break;
-		        default:
-		          return _animatorsEase2["default"].getValue(animatorOptions, time);
-		      }
-		    }
-		  }]);
-
-		  return MotionTween;
-		})();
-
-		exports["default"] = MotionTween;
-		module.exports = exports["default"];
-
-	/***/ },
-	/* 5 */
-	/***/ function(module, exports) {
-
-		'use strict';
-
-		Object.defineProperty(exports, '__esModule', {
-		    value: true
-		});
-
-		var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ('value' in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
-
-		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError('Cannot call a class as a function'); } }
-
-		var Utils = (function () {
-		    function Utils() {
-		        _classCallCheck(this, Utils);
-		    }
-
-		    _createClass(Utils, [{
-		        key: 'extend',
-		        value: function extend(destination, source) {
-		            var isDeep = arguments.length <= 2 || arguments[2] === undefined ? false : arguments[2];
-
-		            var hasDepth = false;
-		            for (var property in source) {
-		                hasDepth = false;
-		                if (isDeep === true && source[property] && source[property].constructor) {
-		                    if (source[property].constructor === Object) {
-		                        hasDepth = true;
-		                        destination[property] = this.extend({}, source[property], true);
-		                    } else if (source[property].constructor === Function) {
-		                        // if (window.console) console.warn("Can't clone, can only reference Functions");
-		                        hasDepth = false;
-		                    }
-		                }
-		                if (hasDepth === false) {
-		                    destination[property] = source[property];
-		                }
-		            }
-		            return destination;
-		        }
-		    }, {
-		        key: 'sum',
-		        value: function sum(arr) {
-		            var sum = 0;
-		            var d = arr.length;
-		            while (d--) {
-		                sum += arr[d];
-		            }
-		            return sum;
-		        }
-		    }]);
-
-		    return Utils;
-		})();
-
-		exports['default'] = new Utils();
-
-		(function () {
-		    var lastTime = 0;
-		    var vendors = ['ms', 'moz', 'webkit', 'o'];
-		    for (var x = 0; x < vendors.length && !window.requestAnimationFrame; ++x) {
-		        window.requestAnimationFrame = window[vendors[x] + 'RequestAnimationFrame'];
-		        window.cancelAnimationFrame = window[vendors[x] + 'CancelAnimationFrame'] || window[vendors[x] + 'CancelRequestAnimationFrame'];
-		    }
-
-		    if (!window.requestAnimationFrame) {
-		        window.requestAnimationFrame = function (callback, element) {
-		            var currTime = new Date().getTime();
-		            var timeToCall = Math.max(0, 16 - (currTime - lastTime));
-		            var id = window.setTimeout(function () {
-		                callback(currTime + timeToCall);
-		            }, timeToCall);
-		            lastTime = currTime + timeToCall;
-		            return id;
-		        };
-		    }
-
-		    if (!window.cancelAnimationFrame) {
-		        window.cancelAnimationFrame = function (id) {
-		            clearTimeout(id);
-		        };
-		    }
-		})();
-		module.exports = exports['default'];
-
-	/***/ },
-	/* 6 */
-	/***/ function(module, exports) {
-
-		// t: current time, b: begInnIng value, c: change In value, d: duration
-		"use strict";
-
-		Object.defineProperty(exports, "__esModule", {
-			value: true
-		});
-		exports.swing = swing;
-		exports.easeInQuad = easeInQuad;
-		exports.easeOutQuad = easeOutQuad;
-		exports.easeInOutQuad = easeInOutQuad;
-		exports.easeInCubic = easeInCubic;
-		exports.easeOutCubic = easeOutCubic;
-		exports.easeInOutCubic = easeInOutCubic;
-		exports.easeInQuart = easeInQuart;
-		exports.easeOutQuart = easeOutQuart;
-		exports.easeInOutQuart = easeInOutQuart;
-		exports.easeInQuint = easeInQuint;
-		exports.easeOutQuint = easeOutQuint;
-		exports.easeInOutQuint = easeInOutQuint;
-		exports.easeInSine = easeInSine;
-		exports.easeOutSine = easeOutSine;
-		exports.easeInOutSine = easeInOutSine;
-		exports.easeInExpo = easeInExpo;
-		exports.easeOutExpo = easeOutExpo;
-		exports.easeInOutExpo = easeInOutExpo;
-		exports.easeInCirc = easeInCirc;
-		exports.easeOutCirc = easeOutCirc;
-		exports.easeInOutCirc = easeInOutCirc;
-		exports.easeInElastic = easeInElastic;
-		exports.easeOutElastic = easeOutElastic;
-		exports.easeInOutElastic = easeInOutElastic;
-		exports.easeInBack = easeInBack;
-		exports.easeOutBack = easeOutBack;
-		exports.easeInOutBack = easeInOutBack;
-		exports.easeInBounce = easeInBounce;
-		exports.easeOutBounce = easeOutBounce;
-		exports.easeInOutBounce = easeInOutBounce;
-
-		function swing(t, b, c, d) {
-			return easeOutQuad(t, b, c, d);
-		}
-
-		function easeInQuad(t, b, c, d) {
-			return c * (t /= d) * t + b;
-		}
-
-		function easeOutQuad(t, b, c, d) {
-			return -c * (t /= d) * (t - 2) + b;
-		}
-
-		function easeInOutQuad(t, b, c, d) {
-			if ((t /= d / 2) < 1) return c / 2 * t * t + b;
-			return -c / 2 * (--t * (t - 2) - 1) + b;
-		}
-
-		function easeInCubic(t, b, c, d) {
-			return c * (t /= d) * t * t + b;
-		}
-
-		function easeOutCubic(t, b, c, d) {
-			return c * ((t = t / d - 1) * t * t + 1) + b;
-		}
-
-		function easeInOutCubic(t, b, c, d) {
-			if ((t /= d / 2) < 1) return c / 2 * t * t * t + b;
-			return c / 2 * ((t -= 2) * t * t + 2) + b;
-		}
-
-		function easeInQuart(t, b, c, d) {
-			return c * (t /= d) * t * t * t + b;
-		}
-
-		function easeOutQuart(t, b, c, d) {
-			return -c * ((t = t / d - 1) * t * t * t - 1) + b;
-		}
-
-		function easeInOutQuart(t, b, c, d) {
-			if ((t /= d / 2) < 1) return c / 2 * t * t * t * t + b;
-			return -c / 2 * ((t -= 2) * t * t * t - 2) + b;
-		}
-
-		function easeInQuint(t, b, c, d) {
-			return c * (t /= d) * t * t * t * t + b;
-		}
-
-		function easeOutQuint(t, b, c, d) {
-			return c * ((t = t / d - 1) * t * t * t * t + 1) + b;
-		}
-
-		function easeInOutQuint(t, b, c, d) {
-			if ((t /= d / 2) < 1) return c / 2 * t * t * t * t * t + b;
-			return c / 2 * ((t -= 2) * t * t * t * t + 2) + b;
-		}
-
-		function easeInSine(t, b, c, d) {
-			return -c * Math.cos(t / d * (Math.PI / 2)) + c + b;
-		}
-
-		function easeOutSine(t, b, c, d) {
-			return c * Math.sin(t / d * (Math.PI / 2)) + b;
-		}
-
-		function easeInOutSine(t, b, c, d) {
-			return -c / 2 * (Math.cos(Math.PI * t / d) - 1) + b;
-		}
-
-		function easeInExpo(t, b, c, d) {
-			return t == 0 ? b : c * Math.pow(2, 10 * (t / d - 1)) + b;
-		}
-
-		function easeOutExpo(t, b, c, d) {
-			return t == d ? b + c : c * (-Math.pow(2, -10 * t / d) + 1) + b;
-		}
-
-		function easeInOutExpo(t, b, c, d) {
-			if (t == 0) return b;
-			if (t == d) return b + c;
-			if ((t /= d / 2) < 1) return c / 2 * Math.pow(2, 10 * (t - 1)) + b;
-			return c / 2 * (-Math.pow(2, -10 * --t) + 2) + b;
-		}
-
-		function easeInCirc(t, b, c, d) {
-			return -c * (Math.sqrt(1 - (t /= d) * t) - 1) + b;
-		}
-
-		function easeOutCirc(t, b, c, d) {
-			return c * Math.sqrt(1 - (t = t / d - 1) * t) + b;
-		}
-
-		function easeInOutCirc(t, b, c, d) {
-			if ((t /= d / 2) < 1) return -c / 2 * (Math.sqrt(1 - t * t) - 1) + b;
-			return c / 2 * (Math.sqrt(1 - (t -= 2) * t) + 1) + b;
-		}
-
-		function easeInElastic(t, b, c, d) {
-			var s = 1.70158;var p = 0;var a = c;
-			if (t == 0) return b;if ((t /= d) == 1) return b + c;if (!p) p = d * .3;
-			if (a < Math.abs(c)) {
-				a = c;var s = p / 4;
-			} else var s = p / (2 * Math.PI) * Math.asin(c / a);
-			return -(a * Math.pow(2, 10 * (t -= 1)) * Math.sin((t * d - s) * (2 * Math.PI) / p)) + b;
-		}
-
-		function easeOutElastic(t, b, c, d) {
-			var s = 1.70158;var p = 0;var a = c;
-			if (t == 0) return b;if ((t /= d) == 1) return b + c;if (!p) p = d * .3;
-			if (a < Math.abs(c)) {
-				a = c;var s = p / 4;
-			} else var s = p / (2 * Math.PI) * Math.asin(c / a);
-			return a * Math.pow(2, -10 * t) * Math.sin((t * d - s) * (2 * Math.PI) / p) + c + b;
-		}
-
-		function easeInOutElastic(t, b, c, d) {
-			var s = 1.70158;var p = 0;var a = c;
-			if (t == 0) return b;if ((t /= d / 2) == 2) return b + c;if (!p) p = d * (.3 * 1.5);
-			if (a < Math.abs(c)) {
-				a = c;var s = p / 4;
-			} else var s = p / (2 * Math.PI) * Math.asin(c / a);
-			if (t < 1) return -.5 * (a * Math.pow(2, 10 * (t -= 1)) * Math.sin((t * d - s) * (2 * Math.PI) / p)) + b;
-			return a * Math.pow(2, -10 * (t -= 1)) * Math.sin((t * d - s) * (2 * Math.PI) / p) * .5 + c + b;
-		}
-
-		function easeInBack(t, b, c, d, s) {
-			if (s == undefined) s = 1.70158;
-			return c * (t /= d) * t * ((s + 1) * t - s) + b;
-		}
-
-		function easeOutBack(t, b, c, d, s) {
-			if (s == undefined) s = 1.70158;
-			return c * ((t = t / d - 1) * t * ((s + 1) * t + s) + 1) + b;
-		}
-
-		function easeInOutBack(t, b, c, d, s) {
-			if (s == undefined) s = 1.70158;
-			if ((t /= d / 2) < 1) return c / 2 * (t * t * (((s *= 1.525) + 1) * t - s)) + b;
-			return c / 2 * ((t -= 2) * t * (((s *= 1.525) + 1) * t + s) + 2) + b;
-		}
-
-		function easeInBounce(t, b, c, d) {
-			return c - easeOutBounce(d - t, 0, c, d) + b;
-		}
-
-		function easeOutBounce(t, b, c, d) {
-			if ((t /= d) < 1 / 2.75) {
-				return c * (7.5625 * t * t) + b;
-			} else if (t < 2 / 2.75) {
-				return c * (7.5625 * (t -= 1.5 / 2.75) * t + .75) + b;
-			} else if (t < 2.5 / 2.75) {
-				return c * (7.5625 * (t -= 2.25 / 2.75) * t + .9375) + b;
-			} else {
-				return c * (7.5625 * (t -= 2.625 / 2.75) * t + .984375) + b;
-			}
-		}
-
-		function easeInOutBounce(t, b, c, d) {
-			if (t < d / 2) return easeInBounce(t * 2, 0, c, d) * .5 + b;
-			return easeOutBounce(t * 2 - d, 0, c, d) * .5 + c * .5 + b;
-		}
-
-	/***/ },
-	/* 7 */
-	/***/ function(module, exports) {
-
-		"use strict";
-
-		Object.defineProperty(exports, "__esModule", {
-		  value: true
-		});
-
-		var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
-
-		var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
-
-		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
-
-		var CubicBezier = (function () {
-		  _createClass(CubicBezier, null, [{
-		    key: "DEFAULT_OPTIONS",
-		    value: {
-		      tolerance: 0.001,
-		      controlPoints: [.15, .66, .83, .67]
-		    },
-		    enumerable: true
-		  }, {
-		    key: "Type",
-		    value: "CubicBezier",
-		    enumerable: true
-		  }]);
-
-		  function CubicBezier(options) {
-		    _classCallCheck(this, CubicBezier);
-
-		    // merge default with passed
-		    this._options = _extends({}, CubicBezier.DEFAULT_OPTIONS, options);
-
-		    this._x = 0;
-		    this._time = 0;
-		  }
-
-		  _createClass(CubicBezier, [{
-		    key: "step",
-		    value: function step(delta) {
-		      // t: current time, b: begInnIng value, c: change In value, d: duration
-		      this._time += delta;
-		      this._x = CubicBezier._getPointOnBezierCurve(this._options.controlPoints, this._time);
-		      return this._x;
-		    }
-		  }, {
-		    key: "isFinished",
-		    value: function isFinished() {
-		      return this._time >= 1;
-		    }
-		  }], [{
-		    key: "getValue",
-		    value: function getValue(options, time) {
-		      return CubicBezier._getPointOnBezierCurve(options.controlPoints, time);
-		    }
-		  }, {
-		    key: "_getPointOnBezierCurve",
-		    value: function _getPointOnBezierCurve(controlPoints, l) {
-		      var a1 = { x: 0, y: 0 };
-		      var a2 = { x: 1, y: 1 };
-
-		      var c1 = { x: controlPoints[0], y: controlPoints[1] };
-		      var c2 = { x: controlPoints[2], y: controlPoints[3] };
-
-		      var b1 = CubicBezier._interpolate(a1, c1, l);
-		      var b2 = CubicBezier._interpolate(c1, c2, l);
-		      var b3 = CubicBezier._interpolate(c2, a2, l);
-
-		      c1 = CubicBezier._interpolate(b1, b2, l);
-		      c2 = CubicBezier._interpolate(b2, b3, l);
-
-		      return CubicBezier._interpolate(c1, c2, l).y;
-		    }
-		  }, {
-		    key: "_interpolate",
-		    value: function _interpolate(p1, p2, l) {
-		      var p3 = {};
-
-		      p3.x = p1.x + (p2.x - p1.x) * l;
-		      p3.y = p1.y + (p2.y - p1.y) * l;
-
-		      return p3;
-		    }
-		  }]);
-
-		  return CubicBezier;
-		})();
-
-		exports["default"] = CubicBezier;
-		module.exports = exports["default"];
-
-	/***/ },
-	/* 8 */
-	/***/ function(module, exports, __webpack_require__) {
-
-		"use strict";
-
-		Object.defineProperty(exports, "__esModule", {
-		  value: true
-		});
-
-		var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
-
-		var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
-
-		function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key]; } } newObj["default"] = obj; return newObj; } }
-
-		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
-
-		var _Easing = __webpack_require__(6);
-
-		var Easing = _interopRequireWildcard(_Easing);
-
-		var Ease = (function () {
-		  _createClass(Ease, null, [{
-		    key: "DEFAULT_OPTIONS",
-		    value: {
-		      tolerance: 0.001,
-		      easingFunction: Easing.easeOutQuad
-		    },
-		    enumerable: true
-		  }, {
-		    key: "Type",
-		    value: "Ease",
-		    enumerable: true
-		  }]);
-
-		  function Ease(options) {
-		    _classCallCheck(this, Ease);
-
-		    // merge default with passed
-		    this._options = _extends({}, Ease.DEFAULT_OPTIONS, options);
-
-		    this._x = 0;
-		    this._time = 0;
-		  }
-
-		  _createClass(Ease, [{
-		    key: "step",
-		    value: function step(delta) {
-		      // t: current time, b: begInnIng value, c: change In value, d: duration
-		      this._time += delta;
-		      this._x = this._options.easingFunction(this._time, 0, 1, 1);
-		      return this._x;
-		    }
-		  }, {
-		    key: "isFinished",
-		    value: function isFinished() {
-		      return this._time >= 1;
-		    }
-		  }], [{
-		    key: "getValue",
-		    value: function getValue(options, time) {
-		      return options.easingFunction(time, 0, 1, 1);
-		    }
-		  }]);
-
-		  return Ease;
-		})();
-
-		exports["default"] = Ease;
-		module.exports = exports["default"];
-
-	/***/ },
-	/* 9 */
-	/***/ function(module, exports) {
-
-		"use strict";
-
-		Object.defineProperty(exports, "__esModule", {
-		  value: true
-		});
-
-		var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
-
-		var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
-
-		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
-
-		var Friction = (function () {
-		  _createClass(Friction, null, [{
-		    key: "DEFAULT_OPTIONS",
-		    value: {
-		      applyAcceleration: function applyAcceleration(accel) {
-		        return accel;
-		      },
-		      friction: 0.1,
-		      destination: 1,
-		      tolerance: 0.001
-		    },
-		    enumerable: true
-		  }, {
-		    key: "Type",
-		    value: "FRICTION",
-		    enumerable: true
-		  }]);
-
-		  function Friction(options) {
-		    _classCallCheck(this, Friction);
-
-		    // merge default with passed
-		    this._options = _extends({}, Friction.DEFAULT_OPTIONS, options);
-		    this._v = 0;
-		    this._x = 0;
-		    this._acceleration = (this._options.destination - this._x) * this._options.friction;
-		    this._previousX = 0;
-		  }
-
-		  _createClass(Friction, [{
-		    key: "step",
-		    value: function step(delta) {
-		      // delta is ignored in the FrictionAnimator
-		      this._acceleration = this._options.applyAcceleration(this._acceleration);
-
-		      this._v += this._acceleration;
-		      this._x += this._v;
-		      this._v *= 1 - this._options.friction;
-
-		      // reset the acceleration as this is set initially
-		      this._acceleration = 0;
-		      this._previousX = this._x;
-
-		      return this._x;
-		    }
-		  }, {
-		    key: "isFinished",
-		    value: function isFinished() {
-		      return Math.round(this._v / this._options.tolerance) === 0 && Math.round(this._x / this._options.tolerance) === 1 / this._options.tolerance ? true : false;
-		    }
-		  }]);
-
-		  return Friction;
-		})();
-
-		exports["default"] = Friction;
-		module.exports = exports["default"];
-
-	/***/ },
-	/* 10 */
-	/***/ function(module, exports) {
-
-		"use strict";
-
-		Object.defineProperty(exports, "__esModule", {
-		  value: true
-		});
-
-		var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
-
-		var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
-
-		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
-
-		var Spring = (function () {
-		  _createClass(Spring, null, [{
-		    key: "DEFAULT_OPTIONS",
-		    value: {
-		      stiffness: 100,
-		      damping: 20,
-		      tolerance: 0.001
-		    },
-		    enumerable: true
-		  }, {
-		    key: "Type",
-		    value: "SPRING",
-		    enumerable: true
-		  }]);
-
-		  function Spring(options) {
-		    _classCallCheck(this, Spring);
-
-		    // merge default with passed
-		    this._options = _extends({}, Spring.DEFAULT_OPTIONS, options);
-
-		    this._v = 0;
-		    this._x = 0;
-		  }
-
-		  _createClass(Spring, [{
-		    key: "step",
-		    value: function step(delta) {
-		      var k = 0 - this._options.stiffness;
-		      var b = 0 - this._options.damping;
-
-		      var F_spring = k * (this._x - 1);
-		      var F_damper = b * this._v;
-
-		      var mass = 1;
-
-		      this._v += (F_spring + F_damper) / mass * delta;
-		      this._x += this._v * delta;
-
-		      return this._x;
-		    }
-		  }, {
-		    key: "isFinished",
-		    value: function isFinished() {
-		      return Math.round(this._v / this._options.tolerance) === 0 && Math.round(this._x / this._options.tolerance) === 1 / this._options.tolerance ? true : false;
-		    }
-		  }]);
-
-		  return Spring;
-		})();
-
-		exports["default"] = Spring;
-		module.exports = exports["default"];
-
-	/***/ },
-	/* 11 */
-	/***/ function(module, exports) {
-
-		// r4k from http://mtdevans.com/2013/05/fourth-order-runge-kutta-algorithm-in-javascript-with-demo/
-		"use strict";
-
-		Object.defineProperty(exports, "__esModule", {
-		  value: true
-		});
-
-		var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
-
-		var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
-
-		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
-
-		var SpringRK4 = (function () {
-		  _createClass(SpringRK4, null, [{
-		    key: "DEFAULT_OPTIONS",
-		    value: {
-		      stiffness: 100,
-		      damping: 20,
-		      tolerance: 0.001
-		    },
-		    enumerable: true
-		  }, {
-		    key: "Type",
-		    value: "SPRINGRK4",
-		    enumerable: true
-		  }]);
-
-		  function SpringRK4(options) {
-		    _classCallCheck(this, SpringRK4);
-
-		    // merge default with passed
-		    this._options = _extends({}, SpringRK4.DEFAULT_OPTIONS, options);
-
-		    // set position to 1 as we are wanting the result normalised
-		    this._state = {
-		      x: 1,
-		      v: 0
-		    };
-		  }
-
-		  _createClass(SpringRK4, [{
-		    key: "_rk4",
-		    value: function _rk4(state, a, dt) {
-		      var x = state.x;
-		      var v = state.v;
-		      // Returns final (position, velocity) array after time dt has passed.
-		      //        x: initial position
-		      //        v: initial velocity
-		      //        a: acceleration function a(x,v,dt) (must be callable)
-		      //        dt: timestep
-		      var x1 = x;
-		      var v1 = v;
-		      var a1 = a(x1, v1, 0);
-
-		      var x2 = x + 0.5 * v1 * dt;
-		      var v2 = v + 0.5 * a1 * dt;
-		      var a2 = a(x2, v2, dt / 2);
-
-		      var x3 = x + 0.5 * v2 * dt;
-		      var v3 = v + 0.5 * a2 * dt;
-		      var a3 = a(x3, v3, dt / 2);
-
-		      var x4 = x + v3 * dt;
-		      var v4 = v + a3 * dt;
-		      var a4 = a(x4, v4, dt);
-
-		      var xf = x + dt / 6 * (v1 + 2 * v2 + 2 * v3 + v4);
-		      var vf = v + dt / 6 * (a1 + 2 * a2 + 2 * a3 + a4);
-
-		      return {
-		        x: xf,
-		        v: vf
-		      };
-		    }
-		  }, {
-		    key: "_acceleration",
-		    value: function _acceleration(x, v, dt) {
-		      // This particular one models a spring with a 1kg mass
-		      return -this._options.stiffness * x - this._options.damping * v;
-		    }
-		  }, {
-		    key: "step",
-		    value: function step(delta) {
-		      this._state = this._rk4(this._state, this._acceleration.bind(this), delta);
-		      // the calculation gives values starting from 1 and then finishing at 0,
-		      // we need to transform the values to work from 0 to 1.
-		      return (this._state.x - 1) * -1;
-		    }
-		  }, {
-		    key: "isFinished",
-		    value: function isFinished() {
-		      return Math.round(this._state.v / this._options.tolerance) === 0 && Math.round(this._state.x / this._options.tolerance) === 0 ? true : false;
-		    }
-		  }]);
-
-		  return SpringRK4;
-		})();
-
-		exports["default"] = SpringRK4;
-		module.exports = exports["default"];
-
-	/***/ },
-	/* 12 */
-	/***/ function(module, exports) {
-
-		"use strict";
-
-		Object.defineProperty(exports, "__esModule", {
-			value: true
-		});
-
-		var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
-
-		var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
-
-		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
-
-		var _DEFAULT_OPTIONS = {
-			loop: false,
-			"in": 0,
-			out: null,
-			fillMode: 0
-		};
-
-		var TimelineAbstract = (function () {
-			_createClass(TimelineAbstract, null, [{
-				key: "FILL_MODE",
-				value: {
-					NOME: 0,
-					FORWARD: 1,
-					BACKWARD: 2,
-					BOTH: 3
-				},
-				enumerable: true
-			}]);
-
-			function TimelineAbstract(name, options) {
-				_classCallCheck(this, TimelineAbstract);
-
-				this._options = null;
-				this._name = null;
-
-				this._init(name, options);
-			}
-
-			/*________________________________________________________
-		 	PUBLIC CLASS METHODS
-		 ________________________________________________________*/
-
-			_createClass(TimelineAbstract, [{
-				key: "getState",
-				value: function getState(time) {
-					return this._getState(time);
-				}
-			}, {
-				key: "_init",
-
-				/*________________________________________________________
-		  	PRIVATE CLASS METHODS
-		  ________________________________________________________*/
-
-				value: function _init(name, options) {
-
-					this._validateOptions(options);
-
-					this._options = _extends({}, _DEFAULT_OPTIONS, options);
-
-					this._name = name;
-				}
-			}, {
-				key: "_validateOptions",
-				value: function _validateOptions(options) {}
-			}, {
-				key: "_getState",
-				value: function _getState(time) {}
-
-				/**
-		   * Method iterates through keyframes for each property and determines our relative duration between in and out
-		   *
-		   * @private
-		   */
-			}, {
-				key: "_updateRelativeDuration",
-				value: function _updateRelativeDuration(absoluteDuration) {
-					var inIndex = -1;
-					var duration = absoluteDuration;
-
-					if (this._options["in"] == null) {
-						this._options["in"] = 0;
-					} else {
-						// adjust the duration
-						if (this._options["in"] > duration) {
-							throw Error("In point is set beyond the end of the tween!");
-						}
-						duration -= this._options["in"];
-					}
-
-					if (this._options.out != null) {
-						duration = this._options.out - this._options["in"];
-					} else {
-						this._options.out = this._options["in"] + duration;
-					}
-
-					this._duration = duration;
-
-					if (this._options["in"] > this._options.out) {
-						throw Error("tween in is greater than out!");
-					}
-				}
-
-				/**
-		   * Method takes any time and wraps it accordingly to be within in and out points
-		   *
-		   * @private
-		   * @param {Number} time Time in milisecond
-		   * @return Number
-		   */
-			}, {
-				key: "_loopTime",
-				value: function _loopTime(time) {
-					return ((time - this._options["in"]) % this._duration + this._duration) % this._duration;
-				}
-
-				/**
-		   * Method takes any time and checks whether the time value requires wrapping, if so then returns wrapped time
-		   *
-		   * @private
-		   * @param {Number} time Time in milisecond
-		   * @return Number
-		   */
-			}, {
-				key: "_resolveTime",
-				value: function _resolveTime(time) {
-					if (time < this._options["in"]) {
-						if (this._options.fillMode === TimelineAbstract.FILL_MODE.BACKWARD || this._options.fillMode === TimelineAbstract.FILL_MODE.BOTH) {
-							if (this._options.loop) {
-								return this._loopTime(time);
-							}
-						}
-					}
-
-					if (time > this._options.out) {
-						if (this._options.fillMode === TimelineAbstract.FILL_MODE.FORWARD || this._options.fillMode === TimelineAbstract.FILL_MODE.BOTH) {
-							if (this._options.loop) {
-								return this._loopTime(time);
-							}
-						}
-					}
-
-					return time;
-				}
-			}, {
-				key: "duration",
-				get: function get() {
-					return this._duration;
-				}
-			}, {
-				key: "name",
-				get: function get() {
-					return this._name;
-				}
-			}, {
-				key: "in",
-				get: function get() {
-					return this._options["in"];
-				}
-			}, {
-				key: "out",
-				get: function get() {
-					return this._options.out;
-				}
-			}, {
-				key: "loop",
-				get: function get() {
-					return this._options.loop;
-				}
-			}, {
-				key: "fillMode",
-				get: function get() {
-					return this._options.fillMode;
-				}
-			}]);
-
-			return TimelineAbstract;
-		})();
-
-		exports["default"] = TimelineAbstract;
-		module.exports = exports["default"];
-
-	/***/ },
-	/* 13 */
-	/***/ function(module, exports, __webpack_require__) {
-
-		'use strict';
-
-		Object.defineProperty(exports, '__esModule', {
-			value: true
-		});
-
-		var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ('value' in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
-
-		var _get = function get(_x, _x2, _x3) { var _again = true; _function: while (_again) { var object = _x, property = _x2, receiver = _x3; _again = false; if (object === null) object = Function.prototype; var desc = Object.getOwnPropertyDescriptor(object, property); if (desc === undefined) { var parent = Object.getPrototypeOf(object); if (parent === null) { return undefined; } else { _x = parent; _x2 = property; _x3 = receiver; _again = true; desc = parent = undefined; continue _function; } } else if ('value' in desc) { return desc.value; } else { var getter = desc.get; if (getter === undefined) { return undefined; } return getter.call(receiver); } } };
-
-		function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { 'default': obj }; }
-
-		function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError('Cannot call a class as a function'); } }
-
-		function _inherits(subClass, superClass) { if (typeof superClass !== 'function' && superClass !== null) { throw new TypeError('Super expression must either be null or a function, not ' + typeof superClass); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } }); if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass; }
-
-		var _timeline = __webpack_require__(1);
-
-		var _timeline2 = _interopRequireDefault(_timeline);
-
-		var InteractiveTimeline = (function (_Timeline) {
-			_inherits(InteractiveTimeline, _Timeline);
-
-			function InteractiveTimeline(name, options) {
-				_classCallCheck(this, InteractiveTimeline);
-
-				_get(Object.getPrototypeOf(InteractiveTimeline.prototype), 'constructor', this).call(this, name, options);
-				this._sequences = [];
-			}
-
-			/*________________________________________________________
-		 	PUBLIC CLASS METHODS
-		 ________________________________________________________*/
-
-			_createClass(InteractiveTimeline, [{
-				key: 'increment',
-				value: function increment(timeDelta) {
-					return this._increment(timeDelta);
-				}
-			}, {
-				key: 'setSequences',
-				value: function setSequences(sequences) {
-					this._setSequences(sequences);
-				}
-			}, {
-				key: 'getSequences',
-				value: function getSequences() {
-					return this._sequences;
-				}
-
-				/*________________________________________________________
-		  	PRIVATE CLASS METHODS
-		  ________________________________________________________*/
-
-			}, {
-				key: '_increment',
-				value: function _increment(timeDelta) {
-					var outDelta = undefined,
-					    sequenceOutTime = undefined;
-
-					// get current sequence
-					var currentSequence = this._getSequenceByTime(this._currentTime);
-
-					this._currentTime += timeDelta;
-
-					// get updated sequence with current time
-					var prospectiveSequence = this._getSequenceByTime(this._currentTime);
-
-					// using sequences currently only works travelling forwards
-					if (timeDelta > 0) {
-						// we only start to think about redirect if last time was within a sequence
-						if (currentSequence != null) {
-							// check to see we have left the current sequence and that the current sequence has a next location
-							if (currentSequence !== prospectiveSequence && currentSequence.next != null) {
-
-								// if there is a prospective then check that its not the next of current
-								if (prospectiveSequence != null) {
-
-									if (currentSequence.next !== prospectiveSequence.label) {
-										// if duration is set on current the outDelta should be from after the duration
-										if (currentSequence.duration) {
-											sequenceOutTime = currentSequence.time + currentSequence.duration;
-										} else {
-											// otherwise no duration set the current sequence extends to the begining of the prospective
-											sequenceOutTime = prospectiveSequence.time;
-										}
-									} else {
-										sequenceOutTime = prospectiveSequence.time;
-									}
-								} else {
-									// if prospective is null and current is not, then a duration must be set, so use that
-
-									sequenceOutTime = currentSequence.time + currentSequence.duration;
-								}
-								// this makes the assumption we have travelled forward and have moved out of the current sequence to the right,
-								// if we have move out of the sequence to the left therefore backwards the outDelta is from the end of the
-								// sequence
-								outDelta = this._currentTime - sequenceOutTime;
-								// adjust time and update current
-								prospectiveSequence = this._getSequenceByLabel(currentSequence.next);
-
-								this.currentTime = prospectiveSequence.time + outDelta;
-							}
-						}
-					}
-
-					return this._getState(this._currentTime);
-				}
-			}, {
-				key: '_setSequences',
-				value: function _setSequences(sequences) {
-					// merge sequence
-					// validate check for overlaping
-					this._sequences = sequences;
-				}
-			}, {
-				key: '_getSequenceByTime',
-				value: function _getSequenceByTime(time) {
-					var sequence = undefined;
-
-					for (var i = 0; i < this._sequences.length; i++) {
-						if (this._sequences[i].time > time) {
-							break;
-						}
-						sequence = this._sequences[i];
-					}
-
-					if (sequence) {
-						// check if time is beyond last sequence
-						if (sequence.duration && time > sequence.time + sequence.duration) {
-							return null;
-						}
-						// return the current sequence
-						return sequence;
-					}
-
-					// no relevent sequences
-					return null;
-				}
-			}, {
-				key: '_getSequenceByLabel',
-				value: function _getSequenceByLabel(label) {
-					for (var i = 0; i < this._sequences.length; i++) {
-						if (this._sequences[i].label === label) {
-							return this._sequences[i];
-						}
-					}
-				}
-			}]);
-
-			return InteractiveTimeline;
-		})(_timeline2['default']);
-
-		exports['default'] = InteractiveTimeline;
-		module.exports = exports['default'];
-
-	/***/ }
-	/******/ ])
-	});
-	;
-
-/***/ },
-/* 80 */
-/***/ function(module, exports, __webpack_require__) {
-
 	"use strict";
 
 	Object.defineProperty(exports, "__esModule", {
 		value: true
 	});
 
-	var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
+	var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
 
-	var _get = function get(_x, _x2, _x3) { var _again = true; _function: while (_again) { var object = _x, property = _x2, receiver = _x3; _again = false; if (object === null) object = Function.prototype; var desc = Object.getOwnPropertyDescriptor(object, property); if (desc === undefined) { var parent = Object.getPrototypeOf(object); if (parent === null) { return undefined; } else { _x = parent; _x2 = property; _x3 = receiver; _again = true; desc = parent = undefined; continue _function; } } else if ("value" in desc) { return desc.value; } else { var getter = desc.get; if (getter === undefined) { return undefined; } return getter.call(receiver); } } };
+	var _pixi = __webpack_require__(76);
 
-	function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { "default": obj }; }
+	var _pixi2 = _interopRequireDefault(_pixi);
+
+	function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
 	function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 
+	function _possibleConstructorReturn(self, call) { if (!self) { throw new ReferenceError("this hasn't been initialised - super() hasn't been called"); } return call && (typeof call === "object" || typeof call === "function") ? call : self; }
+
 	function _inherits(subClass, superClass) { if (typeof superClass !== "function" && superClass !== null) { throw new TypeError("Super expression must either be null or a function, not " + typeof superClass); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } }); if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass; }
 
-	var _pixiJsBinPixi = __webpack_require__(76);
-
-	var _pixiJsBinPixi2 = _interopRequireDefault(_pixiJsBinPixi);
-
-	var InteractiveSprite = (function (_PIXI$Sprite) {
+	var InteractiveSprite = function (_PIXI$Sprite) {
 		_inherits(InteractiveSprite, _PIXI$Sprite);
 
 		function InteractiveSprite(texture, interactiveTimeline) {
 			_classCallCheck(this, InteractiveSprite);
 
-			_get(Object.getPrototypeOf(InteractiveSprite.prototype), "constructor", this).call(this, texture);
+			var _this = _possibleConstructorReturn(this, Object.getPrototypeOf(InteractiveSprite).call(this, texture));
 
-			this._interactiveTimeline = null;
-			this._currentTime = null;
-			this._isPlaying = false;
-			this._interactiveTimeline = interactiveTimeline;
+			_this._interactiveTimeline = null;
+			_this._currentTime = null;
+			_this._isPlaying = false;
 
-			this._init();
+
+			_this._interactiveTimeline = interactiveTimeline;
+
+			_this._init();
+			return _this;
 		}
 
 		/*_______________________________________________
@@ -41461,7 +42186,7 @@
 					return parseInt(value);
 				});
 
-				this._texture.frame = new _pixiJsBinPixi2["default"].Rectangle(frame[0], frame[1], frame[2], frame[3]);
+				this._texture.frame = new _pixi2.default.Rectangle(frame[0], frame[1], frame[2], frame[3]);
 			}
 		}, {
 			key: "_play",
@@ -41472,7 +42197,7 @@
 
 				this._isPlaying = true;
 
-				_pixiJsBinPixi2["default"].ticker.shared.add(this._update, this);
+				_pixi2.default.ticker.shared.add(this._update, this);
 			}
 		}, {
 			key: "_stop",
@@ -41483,34 +42208,28 @@
 
 				this._isPlaying = false;
 
-				_pixiJsBinPixi2["default"].ticker.shared.remove(this._update, this);
+				_pixi2.default.ticker.shared.remove(this._update, this);
 			}
 		}, {
 			key: "_update",
 			value: function _update(deltaTime) {
+				var state = this._interactiveTimeline.increment(deltaTime / _pixi2.default.TARGET_FPMS);
 
-				var state = this._interactiveTimeline.increment(deltaTime / _pixiJsBinPixi2["default"].TARGET_FPMS);
-				// Need to check for null we can't guarantee that the delta will not be out of range of the timeline.
-				// if (state.children.length > 0 && state.children[0].properties.frame != null) {
+				// should be no need to check frame returns null as now timeline has been bet to fill both
 				var frame = state.children[0].properties.frame.split(",").map(function (value) {
 					return parseInt(value);
 				});
-
-				this._texture.frame = new _pixiJsBinPixi2["default"].Rectangle(frame[0], frame[1], frame[2], frame[3]);
-				// }
-
-				// console.log(deltaTime / 0.06);
+				this._texture.frame = new _pixi2.default.Rectangle(frame[0], frame[1], frame[2], frame[3]);
 			}
 		}]);
 
 		return InteractiveSprite;
-	})(_pixiJsBinPixi2["default"].Sprite);
+	}(_pixi2.default.Sprite);
 
-	exports["default"] = InteractiveSprite;
-	module.exports = exports["default"];
+	exports.default = InteractiveSprite;
 
 /***/ },
-/* 81 */
+/* 80 */
 /***/ function(module, exports, __webpack_require__) {
 
 	"use strict";
@@ -41518,6 +42237,7 @@
 	Object.defineProperty(exports, "__esModule", {
 		value: true
 	});
+	exports.timeline = undefined;
 
 	var _timeline = __webpack_require__(75);
 
@@ -41570,6 +42290,7 @@
 
 	var ripplesTimeline = new _timeline.InteractiveTimeline("ripples");
 	ripplesTimeline.addChild(rippleTimeline, { fillMode: _timeline.Timeline.FILL_MODE.FORWARD, out: 800 });
+
 	ripplesTimeline.addKeyframes({
 		timeRemap: [{
 			time: 0, value: 0
@@ -41595,8 +42316,7 @@
 		time: 0, duration: 1000, label: "intro", next: null
 	}]);
 
-	var timeline = hotspotTimeline;
-	exports.timeline = timeline;
+	var timeline = exports.timeline = hotspotTimeline;
 
 /***/ }
 /******/ ]);

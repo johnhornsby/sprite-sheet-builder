@@ -15,7 +15,7 @@ module.exports = {
 			{
 				test: /\.js?$/,
 				exclude: /(css|node_modules|scss)/,
-				loader: 'babel-loader?stage=0'
+				loader: 'babel-loader'
 			},
 			{
 				test: /node_modules\/unidragger/,

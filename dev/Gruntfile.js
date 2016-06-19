@@ -30,8 +30,7 @@ module.exports = function(grunt) {
 
     babel: {
       options: {
-        sourceMap: false,
-        stage: 0
+        sourceMap: false
       },
       dist: {
         files: {
